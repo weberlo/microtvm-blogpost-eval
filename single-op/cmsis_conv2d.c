@@ -20,7 +20,7 @@
 #define BIAS {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0}
 static q7_t conv2_bias[OUT_CH] = BIAS;
 
-int32_t arm_conv_wrapper(TVMValue* arg_values, int* arg_type_codes, int32_t num_args) {
+int32_t arm_conv2d_wrapper(TVMValue* arg_values, int* arg_type_codes, int32_t num_args) {
   void* data_handle = (((TVMValue*)arg_values)[0].v_handle);
   void* kernel_handle = (((TVMValue*)arg_values)[1].v_handle);
   void* output_handle = (((TVMValue*)arg_values)[2].v_handle);

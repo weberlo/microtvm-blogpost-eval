@@ -35,10 +35,12 @@ from tvm import rpc, autotvm, relay
 from tvm.contrib import graph_runtime, util, download
 from tvm.autotvm.tuner import XGBTuner, GATuner, RandomTuner, GridSearchTuner
 import tvm.micro as micro
+from tvm.micro import create_micro_mod
 
 from tvm.relay.op import nn
 from topi.util import get_const_tuple
 from topi.nn.util import get_const_int, get_pad_tuple
+from topi.nn.conv2d import conv2d_nchw
 
 ################
 # Instructions #
@@ -93,183 +95,52 @@ from topi.nn.util import get_const_int, get_pad_tuple
 #   https://github.com/apache/incubator-tvm/blob/master/topi/python/topi/arm_cpu/conv2d_spatial_pack.py#L26
 #
 
-def conv2d_spatial_pack_nchw(cfg, data, kernel, strides, padding, dilation,
-                             out_dtype, num_tile):
-    """compute define for Conv2d Spatial Pack with NCHW layout"""
-    out_dtype = out_dtype or data.dtype
-    N, CI, IH, IW = get_const_tuple(data.shape)
+def schedule_conv2d_nchw(cfg, data, kernel, conv):
+    s = tvm.create_schedule(conv.op)
+    n, f, y, x = s[conv].op.axis
+    rc, ry, rx = s[conv].op.reduce_axis
 
-    if isinstance(dilation, int):
-        dilation_h = dilation_w = dilation
-    else:
-        dilation_h, dilation_w = dilation
+    pad_data = s[conv].op.input_tensors[0]
+    s[pad_data].compute_inline()
 
-    if len(kernel.shape) == 4:
-        pre_packed = False
-        CO, _, KH, KW = get_const_tuple(kernel.shape)
-    else:  # kernel tensor is pre packed
-        pre_packed = True
-        CO, _, KH, KW, VC = get_const_tuple(kernel.shape)
-        CO = CO * VC
+    assert False, "improve schedule. last tuning run didn't generate a speedup"
 
-    dilated_kernel_h = (KH - 1) * dilation_h + 1
-    dilated_kernel_w = (KW - 1) * dilation_w + 1
-    pad_top, pad_left, pad_bottom, pad_right = get_pad_tuple(
-        padding, (dilated_kernel_h, dilated_kernel_w))
-    HSTR, WSTR = strides if isinstance(strides, (tuple, list)) else (strides, strides)
-    OH = (IH + pad_top + pad_bottom - dilated_kernel_h) // HSTR + 1
-    OW = (IW + pad_left + pad_right - dilated_kernel_w) // WSTR + 1
-    data_pad = nn.pad(data, [0, 0, pad_top, pad_left], [0, 0, pad_bottom, pad_right])
+    cfg.define_split("tile_f", f, num_outputs=2)
+    cfg.define_split("tile_y", y, num_outputs=2)
+    cfg.define_split("tile_x", x, num_outputs=2)
+    #cfg.define_split("tile_rc", rc, num_outputs=3)
+    #cfg.define_split("tile_ry", ry, num_outputs=3)
+    #cfg.define_split("tile_rx", rx, num_outputs=3)
+    cfg.define_knob("auto_unroll_max_step", [0, 512, 1500])
+    cfg.define_knob("unroll_explicit", [0, 1])
 
-    # ==================== define configuration space ====================
-    n, co, oh, ow = cfg.axis(N), cfg.axis(CO), cfg.axis(OH), cfg.axis(OW)
-    ci, kh, kw = cfg.reduce_axis(CI), cfg.reduce_axis(KH), cfg.reduce_axis(KW)
+    # tile reduction axes
+    n, f, y, x = s[conv].op.axis
+    rc, ry, rx = s[conv].op.reduce_axis
+    rco, rcm, rci = cfg['tile_rc'].apply(s, conv, rc)
+    ryo, rym, ryi = cfg['tile_rx'].apply(s, conv, ry)
+    rxo, rxm, rxi = cfg['tile_ry'].apply(s, conv, rx)
+    s[conv].reorder(rco, ryo, rxo, rcm, rym, rxm, rci, ryi, rxi, n, f, y, x)
 
-    if num_tile == 2:     # for arm cpu
-        co, vc = cfg.define_split('tile_co', co, num_outputs=2)
-        oh, vh = cfg.define_split('tile_oh', oh, num_outputs=2)
-        ow, vw = cfg.define_split('tile_ow', ow, num_outputs=2)
-    elif num_tile == 3:   # for mali gpu
-        co, _, vc = cfg.define_split('tile_co', co, num_outputs=3)
-        oh, _, vh = cfg.define_split('tile_oh', oh, num_outputs=3)
-        ow, _, vw = cfg.define_split('tile_ow', ow, num_outputs=3)
-    else:
-        raise RuntimeError("Invalid num_tile")
+    kernel_scope = n  # this is the scope to attach global config inside this kernel
+    output = conv
 
-    cfg.define_reorder("reorder_0",
-                       [n, co, oh, ow, ci, kh, kw, vh, vw, vc],
-                       policy='candidate', candidate=[
-                           [n, co, oh, ow, ci, kh, kw, vh, vw, vc],
-                           [n, co, oh, ow, ci, kh, kw, vc, vh, vw]])
-
-    cfg.define_annotate("ann_reduce", [kh, kw], policy='try_unroll')
-    #cfg.define_annotate("ann_spatial", [vh, vw, vc], policy='try_unroll_vec')
-    cfg.define_annotate("ann_spatial", [vh, vw, vc], policy='try_unroll')
-
-    # fallback support
-    if cfg.is_fallback:
-        if num_tile == 2:     # arm cpu
-            ref_log = autotvm.tophub.load_reference_log('arm_cpu', 'rk3399', 'conv2d', 'direct')
-            cfg.fallback_with_reference_log(ref_log)
-        elif num_tile == 3:  # mali gpu
-            ref_log = autotvm.tophub.load_reference_log('mali', 'rk3399', 'conv2d', 'direct')
-            cfg.fallback_with_reference_log(ref_log)
-    # ====================================================================
-
-    VC = cfg["tile_co"].size[-1]
-    VH = cfg["tile_oh"].size[-1]
-    VW = cfg["tile_ow"].size[-1]
-
-    kvshape = (CO // VC, CI, KH, KW, VC)
-    ovshape = (N, CO // VC, OH // VH, OW // VW, VH, VW, VC)
-    oshape = (N, CO, OH, OW)
-
-    if dilation_h != 1 or dilation_w != 1:
-        # undilate input data
-        dvshape = (N, OH // VH, OW // VW, CI, KH, KW, VH, VW)
-        data_vec = tvm.compute(dvshape, lambda n, h, w, ci, kh, kw, vh, vw:
-                               data_pad[n][ci][(h*VH+vh)*HSTR+kh*dilation_h]
-                               [(w*VW+vw)*WSTR+kw*dilation_w],
-                               name='data_vec_undilated')
-    else:
-        dvshape = (N, OH // VH, OW // VW, CI, VH*HSTR + KH-1, VW*WSTR + KW-1)
-        data_vec = tvm.compute(dvshape, lambda n, h, w, ci, vh, vw:
-                               data_pad[n][ci][h*VH*HSTR+vh][w*VW*WSTR+vw],
-                               name='data_vec')
-
-    if pre_packed:
-        kernel_vec = kernel
-    else:
-        kernel_vec = tvm.compute(kvshape, lambda co, ci, kh, kw, vc:
-                                 kernel[co*VC+vc][ci][kh][kw],
-                                 name='kernel_vec')
-
-    ci = tvm.reduce_axis((0, CI), name='ci')
-    kh = tvm.reduce_axis((0, KH), name='kh')
-    kw = tvm.reduce_axis((0, KW), name='kw')
-
-    if dilation_h != 1 or dilation_w != 1:
-        conv = tvm.compute(ovshape, lambda n, co, h, w, vh, vw, vc: \
-            tvm.sum(data_vec[n, h, w, ci, kh, kw, vh, vw].astype(out_dtype) *
-                    kernel_vec[co, ci, kh, kw, vc].astype(out_dtype),
-                    axis=[ci, kh, kw]), name='conv')
-    else:
-        conv = tvm.compute(ovshape, lambda n, co, h, w, vh, vw, vc: \
-            tvm.sum(data_vec[n, h, w, ci, vh*HSTR+kh, vw*WSTR+kw].astype(out_dtype) *
-                    kernel_vec[co, ci, kh, kw, vc].astype(out_dtype),
-                    axis=[ci, kh, kw]), name='conv')
-
-    idxdiv = tvm.indexdiv
-    idxmod = tvm.indexmod
-
-    output = tvm.compute(oshape, lambda n, co, h, w:
-                         conv[n,
-                              idxdiv(co, VC), idxdiv(h, VH), idxdiv(w, VW),
-                              idxmod(h, VH), idxmod(w, VW), idxmod(co, VC)],
-                         name='output_unpack', tag='spatial_conv2d_output')
-    return output
-
-
-def schedule_conv2d_spatial_pack_nchw(cfg, s, data_vec, kernel_vec,
-                                      conv, output, last):
-    """schedule implementation"""
-    n, co, oh, ow, vh, vw, vc = s[conv].op.axis
-    ci, kh, kw = s[conv].op.reduce_axis
-
-    # schedule conv
-    cfg["reorder_0"].apply(s, conv, [n, co, oh, ow, ci, kh, kw, vh, vw, vc])
-    cfg["ann_reduce"].apply(s, conv, [kh, kw],
-                            axis_lens=[get_const_int(kh.dom.extent),
-                                       get_const_int(kw.dom.extent)],
-                            max_unroll=16,
-                            cfg=cfg)
-    cfg["ann_spatial"].apply(s, conv, [vh, vw, vc],
-                             axis_lens=[cfg['tile_oh'].size[-1],
-                                        cfg['tile_ow'].size[-1],
-                                        cfg['tile_co'].size[-1]],
-                             max_unroll=None,
-                             cfg=cfg)
-
-    # schedule fusion
-    n, co, h, w = s[last].op.axis
-    co, vc = cfg['tile_co'].apply(s, last, co)
-    oh, vh = cfg['tile_oh'].apply(s, last, h)
-    ow, vw = cfg['tile_ow'].apply(s, last, w)
-    s[last].reorder(n, co, oh, ow, vh, vw, vc)
-    if last != output:
-        s[output].compute_inline()
-        cfg["ann_spatial"].apply(s, last, [vh, vw, vc],
-                                 axis_lens=[cfg['tile_oh'].size[-1],
-                                            cfg['tile_ow'].size[-1],
-                                            cfg['tile_co'].size[-1]],
-                                 max_unroll=None,
-                                 cfg=cfg)
-    s[conv].compute_at(s[last], ow)
-
-    if data_vec.op.name == 'data_vec_undilated':
-        _, h, _, _, _, _, _, _ = s[data_vec].op.axis
-    else:
-        _, h, _, _, _, _ = s[data_vec].op.axis
-
-    if kernel_vec.op.name == 'kernel_vec':
-        co, _, _, _, _ = s[kernel_vec].op.axis
-        if autotvm.GLOBAL_SCOPE.in_tuning:
-            # kernel packing will be pre-computed during compilation, so we skip
-            # this part to make tuning records correct
-            s[kernel_vec].pragma(co, 'debug_skip_region')
+    # tune unroll
+    s[output].pragma(kernel_scope, 'auto_unroll_max_step', cfg['auto_unroll_max_step'].val)
+    s[output].pragma(kernel_scope, 'unroll_explicit', cfg['unroll_explicit'].val)
 
     return s
 
 
 @autotvm.template
-def conv2d_template(N, H, W, CO, CI, KH, KW, strides, padding, dilation, layout, out_dtype):
+def conv2d_nchw_template(N, H, W, CO, CI, KH, KW, strides, padding, dilation, layout, out_dtype):
     data = tvm.placeholder((N, CI, H, W), name='data')
     kernel = tvm.placeholder((CO, CI, KH, KW), name='kernel')
 
+    conv = conv2d_nchw(data, kernel, strides, padding, dilation, out_dtype)
+
     cfg = autotvm.get_config()
-    conv = conv2d_spatial_pack_nchw(
-            cfg, data, kernel, strides, padding, dilation, layout, out_dtype)
-    sched = schedule_conv2d_spatial_pack_nchw(cfg, [conv])
+    sched = schedule_conv2d_nchw(cfg, data, kernel, conv)
     return sched, [data, kernel, conv]
 
 
@@ -321,9 +192,9 @@ TARGET = tvm.target.create('c -device=micro_dev')
 N_TRIAL = 300
 EARLY_STOPPING = 150
 # we only need one per trial because the timings are cycle-accurate
-N_PER_TRIAL = 3
+N_PER_TRIAL = 9
 # change this to the number of boards you have attached
-N_PARALLEL = 8
+N_PARALLEL = 10
 
 TRACKER_ADDR = '0.0.0.0'
 TRACKER_PORT = 9190
@@ -357,12 +228,13 @@ break UTVMDone
         f.write(gdbinit_contents)
 reset_gdbinit()
 
+
 ########################
 # Conv Autotuning/Eval #
 ########################
 def tune_and_eval_conv():
     print('[Tuning]')
-    tasks = [autotvm.task.create(conv2d_template,
+    tasks = [autotvm.task.create(conv2d_nchw_template,
             args=(N, H, W, CO, CI, KH, KW, STRIDES, PADDING, DILATION, LAYOUT, DTYPE),
             target=TARGET)]
 
@@ -395,44 +267,43 @@ def tune_and_eval_conv():
 
     input('finished tuning...')
     print('[Evaluation]')
+    data_np = np.random.uniform(size=(N, CI, H, W)).astype(np.float32)
+    kernel_np = np.random.uniform(size=(CO, CI, KH, KW)).astype(np.float32)
 
     def eval_mod(c_mod):
         with micro.Session(DEV_CONFIG) as sess:
-            micro_mod = sess.create_micro_mod(c_mod)
+            micro_mod = create_micro_mod(c_mod, DEV_CONFIG)
             micro_func = micro_mod['conv2d']
             ctx = tvm.micro_dev(0)
 
-            data_np = np.random.uniform(size=(N, CI, H, W)).astype(np.float32)
             data_tvm = tvm.nd.array(data_np, ctx)
-            kernel_np = np.random.uniform(size=(CO, CI, KH, KW)).astype(np.float32)
             kernel_tvm = tvm.nd.array(kernel_np, ctx)
-            c_tvm = tvm.nd.empty([N, CO, H, W], ctx=ctx)
-            res = micro_func(data_tvm, kernel_tvm, c_tvm)
-        return res
+            output_tvm = tvm.nd.empty([N, CO, H, W], ctx=ctx)
+            micro_func(data_tvm, kernel_tvm, output_tvm)
+            output_np = output_tvm.asnumpy()
+            elapsed_time = sess.get_last_batch_time()
+        return elapsed_time, output_np
 
     # compile with default schedule
     with TARGET:
-        sched, arg_bufs = conv2d_template(N, H, W, CO, CI, KH, KW, STRIDES, PADDING, DILATION, LAYOUT, DTYPE)
+        sched, arg_bufs = conv2d_nchw_template(N, H, W, CO, CI, KH, KW, STRIDES, PADDING, DILATION, LAYOUT, DTYPE)
         c_mod = tvm.build(sched, arg_bufs, name='conv2d')
-    default_cycle_count = eval_mod(c_mod)
+    untuned_time, untuned_output = eval_mod(c_mod)
 
     # compile kernels with history best records
     with autotvm.apply_history_best(LOG_FILE_NAME):
         with TARGET:
-            sched, arg_bufs = conv2d_template(N, H, W, CO, CI, KH, KW, STRIDES, PADDING, DILATION, LAYOUT, DTYPE)
+            sched, arg_bufs = conv2d_nchw_template(N, H, W, CO, CI, KH, KW, STRIDES, PADDING, DILATION, LAYOUT, DTYPE)
             c_mod = tvm.build(sched, arg_bufs, name='conv2d')
-    autotune_cycle_count = eval_mod(c_mod)
+    tuned_time, tuned_output = eval_mod(c_mod)
 
-    print(f'  speedup: {default_cycle_count / autotune_cycle_count}')
+    print(f'  speedup: {untuned_time / tuned_time}')
+    tvm.testing.assert_allclose(untuned_output, tuned_output)
 
 
 #########################
 # Model Autotuning/Eval #
 #########################
-def get_micro_model():
-    pass
-
-
 def tune_and_eval_model():
     print('[Tuning]')
     from mxnet.gluon.model_zoo.vision import get_model
@@ -502,5 +373,5 @@ def tune_and_eval_model():
 
 
 if __name__ == '__main__':
-    #tune_and_eval_conv()
-    tune_and_eval_model()
+    tune_and_eval_conv()
+    #tune_and_eval_model()
