@@ -269,7 +269,7 @@ for i, param in enumerate(mod['main'].params):  # skip the input param
 # Begin a session
 import time
 print("[Initialization]")
-DEV_CONFIG = micro.device.arm.stm32f746xx.default_config('127.0.0.1', 6666)
+DEV_CONFIG = micro.device.arm.stm32f746xx.default_config('127.0.0.1', 6668)
 with micro.Session(DEV_CONFIG):
     # Build the function
     print("[Building]")

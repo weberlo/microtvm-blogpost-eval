@@ -63,9 +63,9 @@ TARGET = tvm.target.create('c -device=micro_dev')
 N, L, M = 32, 32, 32
 DTYPE = 'float32'
 
-N_TRIAL = 2
-N_PER_TRIAL = 1
-N_PARALLEL = 1
+N_TRIAL = 10
+N_PER_TRIAL = 10
+N_PARALLEL = 10
 
 SERVER_ADDR = '0.0.0.0'
 SERVER_PORT = 9190
@@ -109,7 +109,7 @@ def tune():
     measure_option = autotvm.measure_option(
             builder=autotvm.LocalBuilder(
                 build_func=tvm.micro.cross_compiler(DEV_CREATE_MICRO_LIB, micro.LibType.OPERATOR)),
-            runner=autotvm.RPCRunner('micro', SERVER_ADDR, SERVER_PORT, n_parallel=N_PARALLEL, number=N_PER_TRIAL)
+            runner=autotvm.RPCRunner('arm.stm32f746xx', SERVER_ADDR, SERVER_PORT, n_parallel=N_PARALLEL, number=N_PER_TRIAL)
             )
 
     # create tmp log file
