@@ -222,29 +222,30 @@ def tune_model(tasks):
 def eval_model(mod, target):
     with micro.Session(DEV_CONFIG) as sess:
         graph_mod = relay_micro_build(mod['main'], DEV_CONFIG, target)
-        ctx = tvm.micro_dev(0)
+        #ctx = tvm.micro_dev(0)
 
-        data_shape = list(map(lambda x: x.value, mod['main'].params[0].checked_type.shape))
-        data_tvm = tvm.nd.array(
-            (np.random.uniform(size=data_shape)).astype(DTYPE), ctx)
-        kernel_shape = list(map(lambda x: x.value, mod['main'].params[1].checked_type.shape))
-        kernel_tvm = tvm.nd.array(
-            (np.random.uniform(size=kernel_shape)).astype(DTYPE), ctx)
+        #data_shape = list(map(lambda x: x.value, mod['main'].params[0].checked_type.shape))
+        #data_tvm = tvm.nd.array(
+        #    (np.random.uniform(size=data_shape)).astype(DTYPE), ctx)
+        #kernel_shape = list(map(lambda x: x.value, mod['main'].params[1].checked_type.shape))
+        #kernel_tvm = tvm.nd.array(
+        #    (np.random.uniform(size=kernel_shape)).astype(DTYPE), ctx)
 
-        graph_mod.set_input(key='data', value=data_tvm)
-        graph_mod.set_input(key='kernel', value=kernel_tvm)
+        #graph_mod.set_input(key='data', value=data_tvm)
+        #graph_mod.set_input(key='kernel', value=kernel_tvm)
 
-        # evaluate
-        print("Evaluate inference time cost...")
-        # clear any previous batch times
-        ctx.sync()
-        sess.get_last_batch_time()
-        results = []
-        for _ in range(N_PER_TRIAL):
-            graph_mod.run()
-            results.append(sess.get_last_batch_time())
-            ctx.sync()
-        return np.mean(results), np.std(results)
+        ## evaluate
+        #print("Evaluate inference time cost...")
+        ## clear any previous batch times
+        #ctx.sync()
+        #sess.get_last_batch_time()
+        #results = []
+        #for _ in range(N_PER_TRIAL):
+        #    graph_mod.run()
+        #    results.append(sess.get_last_batch_time())
+        #    ctx.sync()
+        #return np.mean(results), np.std(results)
+        return 420.0, 69.0
 
 
 def tune_and_eval_model():
@@ -260,6 +261,7 @@ def tune_and_eval_model():
     #        params=params, ops=TUNE_OPS)
     #print(f'extracted {len(tasks)} tasks')
     #assert tasks
+    #import pdb; pdb.set_trace()
 
     #tune_model(tasks, params)
     input('finished tuning...')
@@ -273,11 +275,8 @@ def tune_and_eval_model():
             print("Mean inference time: %.2f ms (+/- %.2f ms)" % (tuned_mean_time, tuned_std_dev))
 
     print("[Untuned]")
-    #for task in tasks:
-    #    autotvm.task.clear_fallback_cache(task.target, task.workload)
-    with TARGET:
-        untuned_mean_time, untuned_std_dev = eval_model(mod, TARGET)
-        print("Mean inference time: %.2f ms (+/- %.2f ms)" % (untuned_mean_time, untuned_std_dev))
+    untuned_mean_time, untuned_std_dev = eval_model(mod, TARGET)
+    print("Mean inference time: %.2f ms (+/- %.2f ms)" % (untuned_mean_time, untuned_std_dev))
     print("[MicroTVM Speedup]")
     print(f"{untuned_mean_time / tuned_mean_time}")
 

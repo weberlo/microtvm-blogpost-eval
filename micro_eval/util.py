@@ -1,6 +1,7 @@
 import tvm
 import topi
 from tvm import autotvm, relay
+from tvm.relay import create_executor
 from tvm.autotvm.task.topi_integration import TaskExtractEnv, deserialize_args
 import tvm.micro as micro
 from tvm.micro import create_micro_mod
@@ -54,10 +55,12 @@ def conv2d_arm_micro_nchw(cfg, data, kernel, strides, padding, dilation, layout,
             [n, co, oh, ow, ci, kh, kw, vh, vw, vc],
             policy='candidate', candidate=[
                 [n, co, oh, ow, ci, kh, kw, vh, vw, vc],
-                [n, co, oh, ow, ci, kh, kw, vc, vh, vw]])
+                [n, co, oh, ow, ci, kh, kw, vc, vh, vw],
+                [n, co, oh, ow, ci, vh, vw, vc, kh, kw],
+                [n, co, oh, ow, ci, vc, vh, vw, kh, kw]])
 
     #cfg.define_knob("auto_unroll_max_step", [0, 256, 512, 1024])
-    cfg.define_knob("auto_unroll_max_step", [0, 32, 64, 128, 256])
+    cfg.define_knob("auto_unroll_max_step", [0, 16, 32, 64, 128, 256])
     cfg.define_knob("unroll_explicit", [0, 1])
 
     cfg.define_annotate("ann_reduce", [kh, kw], policy='try_unroll')
@@ -182,3 +185,17 @@ def relay_micro_build(func, dev_config, target, params=None):
     return mod
 
 
+def eval_relay_intrp(mod, args):
+    main_gv = relay.GlobalVar('main')
+    mod = relay.Module({main_gv: mod['main']})
+    intrp = create_executor("debug", mod)
+    f = intrp.evaluate(main_gv)
+    return f(*args)
+
+
+def eval_cpu_graph_runtime(mod, params, input_dict):
+    graph, op_mod, params = relay.build(mod['main'], target="llvm", params=params)
+    graph_mod = graph_runtime.create(graph, op_mod, tvm.cpu(0))
+    graph_mod.set_input(**params)
+    graph_mod.run(**input_dict)
+    return graph_mod.get_output(0).asnumpy()
