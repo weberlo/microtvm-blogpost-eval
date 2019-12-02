@@ -124,7 +124,10 @@ TUNE_OPS = [relay.op.nn.conv2d]
 N, H, W, CO, CI, KH, KW = 1, 32, 32, 3, 3, 5, 5
 STRIDES, PADDING, DILATION = (1, 1), (1, 1), 1
 LAYOUT = 'NCHW'
-DTYPE = 'float32'
+#IN_DTYPE = 'float32'
+#OUT_DTYPE = 'float32'
+IN_DTYPE = 'int8'
+OUT_DTYPE = 'int32'
 # disable timeouts because JTAG is slow
 TIMEOUT = 0
 assert N == 1, "Only consider batch_size = 1 in this template"
@@ -163,9 +166,9 @@ def build_conv2d_relay():
 
     #assert False, "we might need to use NCHW for micro and interp, because the bias add causes problems"
     # Construct Relay program (used for micro and interpreter eval).
-    data_var = relay.var("data", shape=DATA_SHAPE, dtype=DTYPE)
-    kernel_var = relay.var("kernel", shape=KERNEL_SHAPE, dtype=DTYPE)
-    bias_var = relay.var("bias", shape=BIAS_SHAPE, dtype=DTYPE)
+    data_var = relay.var("data", shape=DATA_SHAPE, dtype=IN_DTYPE)
+    kernel_var = relay.var("kernel", shape=KERNEL_SHAPE, dtype=IN_DTYPE)
+    bias_var = relay.var("bias", shape=BIAS_SHAPE, dtype=OUT_DTYPE)
     conv_expr = relay.nn.conv2d(
             data_var, kernel_var,
             kernel_size=KERNEL_SIZE,
@@ -174,7 +177,8 @@ def build_conv2d_relay():
             dilation=DILATION,
             channels=CO,
             data_layout=LAYOUT,
-            out_layout=LAYOUT)
+            out_layout=LAYOUT,
+            out_dtype=OUT_DTYPE)
     func = relay.Function(relay.analysis.free_vars(conv_expr), conv_expr)
     mod = relay.Module.from_expr(func)
     mod = transform.InferType()(mod)
@@ -183,6 +187,15 @@ def build_conv2d_relay():
 
 def tune_model(tasks):
     print('[Tuning]')
+    for i in range(len(tasks)):
+        if 'conv2d' in task.name:
+            tasks[i] = autotvm.task.create(
+                    tasks[i].name,
+                    tasks[i].args,
+                    tasks[i].target,
+                    tasks[i].target_host,
+                    template_key='direct')
+
     measure_option = autotvm.measure_option(
             builder=autotvm.LocalBuilder(
                 build_func=tvm.micro.cross_compiler(DEV_CONFIG, micro.LibType.OPERATOR)),
@@ -216,36 +229,35 @@ def tune_model(tasks):
 
     # store best record in a cache file
     autotvm.record.pick_best(tmp_log_file, E2E_LOG_FILE_NAME)
-    os.remove(tmp_log_file)
+    #os.remove(tmp_log_file)
 
 
 def eval_model(mod, target):
     with micro.Session(DEV_CONFIG) as sess:
         graph_mod = relay_micro_build(mod['main'], DEV_CONFIG, target)
-        #ctx = tvm.micro_dev(0)
+        ctx = tvm.micro_dev(0)
 
-        #data_shape = list(map(lambda x: x.value, mod['main'].params[0].checked_type.shape))
-        #data_tvm = tvm.nd.array(
-        #    (np.random.uniform(size=data_shape)).astype(DTYPE), ctx)
-        #kernel_shape = list(map(lambda x: x.value, mod['main'].params[1].checked_type.shape))
-        #kernel_tvm = tvm.nd.array(
-        #    (np.random.uniform(size=kernel_shape)).astype(DTYPE), ctx)
+        data_shape = list(map(lambda x: x.value, mod['main'].params[0].checked_type.shape))
+        data_tvm = tvm.nd.array(
+            (np.random.uniform(size=data_shape)).astype(IN_DTYPE), ctx)
+        kernel_shape = list(map(lambda x: x.value, mod['main'].params[1].checked_type.shape))
+        kernel_tvm = tvm.nd.array(
+            (np.random.uniform(size=kernel_shape)).astype(IN_DTYPE), ctx)
 
-        #graph_mod.set_input(key='data', value=data_tvm)
-        #graph_mod.set_input(key='kernel', value=kernel_tvm)
+        graph_mod.set_input(key='data', value=data_tvm)
+        graph_mod.set_input(key='kernel', value=kernel_tvm)
 
-        ## evaluate
-        #print("Evaluate inference time cost...")
-        ## clear any previous batch times
-        #ctx.sync()
-        #sess.get_last_batch_time()
-        #results = []
-        #for _ in range(N_PER_TRIAL):
-        #    graph_mod.run()
-        #    results.append(sess.get_last_batch_time())
-        #    ctx.sync()
-        #return np.mean(results), np.std(results)
-        return 420.0, 69.0
+        # evaluate
+        print("Evaluate inference time cost...")
+        # clear any previous batch times
+        ctx.sync()
+        sess.get_last_batch_time()
+        results = []
+        for _ in range(N_PER_TRIAL):
+            graph_mod.run()
+            ctx.sync()
+            results.append(sess.get_last_batch_time())
+        return np.mean(results), np.std(results)
 
 
 def tune_and_eval_model():
@@ -261,9 +273,8 @@ def tune_and_eval_model():
     #        params=params, ops=TUNE_OPS)
     #print(f'extracted {len(tasks)} tasks')
     #assert tasks
-    #import pdb; pdb.set_trace()
 
-    #tune_model(tasks, params)
+    #tune_model(tasks)
     input('finished tuning...')
 
     print('[[Evaluation]]')

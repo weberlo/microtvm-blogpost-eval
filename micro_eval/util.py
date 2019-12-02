@@ -6,6 +6,7 @@ from tvm.autotvm.task.topi_integration import TaskExtractEnv, deserialize_args
 import tvm.micro as micro
 from tvm.micro import create_micro_mod
 from tvm.contrib import graph_runtime, util, download
+from tvm.contrib.debugger import debug_runtime
 
 from topi.util import get_const_tuple
 from topi.nn.util import get_const_int, get_pad_tuple
@@ -20,10 +21,6 @@ TaskExtractEnv()
 
 @autotvm.register_topi_compute(conv2d, 'micro_dev', ['direct'])
 def conv2d_arm_micro_nchw(cfg, data, kernel, strides, padding, dilation, layout, out_dtype):
-    #data = tvm.placeholder((N, CI, H, W), name='data')
-    #kernel = tvm.placeholder((CO, CI, KH, KW), name='kernel')
-    #conv = conv2d_nchw(data, kernel, strides, padding, dilation, layout, out_dtype)
-    #sched = schedule_conv2d_nchw(data, kernel, conv)
     conv = conv2d_nchw(data, kernel, strides, padding, dilation, out_dtype)
 
     N, CI, H, W = get_const_tuple(data.shape)
@@ -138,9 +135,9 @@ def conv2d_arm_micro_nchw_template(*args, **kwargs):
     return _conv2d_arm_micro_nchw_template(*args, **kwargs)
 
 
-#@autotvm.task.register("topi_nn_conv2d", override=True)
-#def conv2d_arm_micro_nchw_topi_task(*args, **kwargs):
-#    return _conv2d_arm_micro_nchw_template(*args, **kwargs)
+@autotvm.task.register("topi_nn_conv2d", override=True)
+def conv2d_arm_micro_nchw_topi_task(*args, **kwargs):
+    return _conv2d_arm_micro_nchw_template(*args, **kwargs)
 
 
 #def register_micro_dev_tuning_tasks():
@@ -153,6 +150,8 @@ def conv2d_arm_micro_nchw_template(*args, **kwargs):
 #    #autotvm.template(conv2d_arm_micro_nchw_template)
 #    autotvm.task.register(conv2d_arm_micro_nchw_template, "topi_nn_conv2d", override=True)
 
+
+DEBUG_MODE = False
 
 def relay_micro_build(func, dev_config, target, params=None):
     """Create a graph runtime module with a micro device context from a Relay function.
@@ -180,7 +179,10 @@ def relay_micro_build(func, dev_config, target, params=None):
     print(c_mod.get_source())
     micro_mod = micro.create_micro_mod(c_mod, dev_config)
     ctx = tvm.micro_dev(0)
-    mod = graph_runtime.create(graph, micro_mod, ctx)
+    if DEBUG_MODE:
+        mod = debug_runtime.create(graph, micro_mod, ctx, dump_root='/home/lweber/microtvm-blogpost-eval/debug/micro')
+    else:
+        mod = graph_runtime.create(graph, micro_mod, ctx)
     mod.set_input(**params)
     return mod
 
@@ -190,12 +192,15 @@ def eval_relay_intrp(mod, args):
     mod = relay.Module({main_gv: mod['main']})
     intrp = create_executor("debug", mod)
     f = intrp.evaluate(main_gv)
-    return f(*args)
+    return f(*args).data.asnumpy()
 
 
 def eval_cpu_graph_runtime(mod, params, input_dict):
     graph, op_mod, params = relay.build(mod['main'], target="llvm", params=params)
-    graph_mod = graph_runtime.create(graph, op_mod, tvm.cpu(0))
+    if DEBUG_MODE:
+        graph_mod = debug_runtime.create(graph, op_mod, tvm.cpu(0), dump_root='/home/lweber/microtvm-blogpost-eval/debug/cpu')
+    else:
+        graph_mod = graph_runtime.create(graph, op_mod, tvm.cpu(0))
     graph_mod.set_input(**params)
     graph_mod.run(**input_dict)
     return graph_mod.get_output(0).asnumpy()

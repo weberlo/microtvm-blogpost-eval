@@ -99,7 +99,7 @@ from micro_eval.util import conv2d_arm_micro_nchw_template
 logging.getLogger('autotvm').setLevel(logging.DEBUG)
 logging.getLogger('autotvm').addHandler(logging.StreamHandler(sys.stdout))
 
-DEV_CONFIG = micro.device.arm.stm32f746xx.default_config('127.0.0.1', 6666)
+DEV_CONFIG = micro.device.arm.stm32f746xx.default_config('127.0.0.1', 6668)
 
 DEVICE_ID = 'arm.stm32f746xx'
 TARGET = tvm.target.create('c -device=micro_dev')

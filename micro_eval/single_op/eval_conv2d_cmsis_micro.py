@@ -64,7 +64,19 @@ CMSIS_SRC_PATHS = [
     f'{CMSIS_PATH}/CMSIS/NN/Source/ConvolutionFunctions/arm_nn_mat_mult_kernel_q7_q15_reordered.c'
 ]
 
-DEV_CONFIG = micro.device.arm.stm32f746xx.default_config('127.0.0.1', 6666)
+from tvm.micro.device.arm import stm32f746xx
+from stm32f746xx import MemConstraint
+DEV_CONFIG = stm32f746xx.default_config('127.0.0.1', 6668)
+DEV_CONFIG['memory_layout'] = stm32f746xx.gen_mem_layout(OrderedDict([
+    ('text', (10000, MemConstraint.ABSOLUTE_BYTES)),
+    ('rodata', (100, MemConstraint.ABSOLUTE_BYTES)),
+    ('data', (100, MemConstraint.ABSOLUTE_BYTES)),
+    ('bss', (600, MemConstraint.ABSOLUTE_BYTES)),
+    ('args', (4096, MemConstraint.ABSOLUTE_BYTES)),
+    ('heap', (50.0, MemConstraint.WEIGHT)),
+    ('workspace', (2048, MemConstraint.ABSOLUTE_BYTES)),
+    ('stack', (32, MemConstraint.ABSOLUTE_BYTES)),
+    ]))
 
 N, H, W, CO, CI = 1, 16, 16, 32, 32
 KH, KW = 5, 5
