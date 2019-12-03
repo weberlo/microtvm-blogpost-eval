@@ -1,23 +1,26 @@
+import json
+import warnings
+
 import mxnet as mx
 import mxnet.ndarray as nd
 from mxnet import nd, autograd, gluon
 from mxnet.gluon.data.vision import transforms
 import numpy as np
+
 import tvm
 from tvm.contrib import graph_runtime, util
 from tvm import relay
 import tvm.micro as micro
 from tvm.relay.testing import resnet
-import warnings
 
 import micro_eval
 from micro_eval.util import relay_micro_build, eval_cpu_graph_runtime, eval_relay_intrp
 
-model_name = "cifar10_cnn"
+MODEL_NAME = "cifar10_cnn"
 # Set to true if you want to train before inference
-should_train = False
+SHOULD_TRAIN = False
 # Batch number after which you just don't care
-stop_training_after = 1
+STOP_TRAINING_AFTER = 1
 
 # Use GPU if one exists, else use CPU
 ctx = mx.gpu() if mx.context.num_gpus() else mx.cpu()
@@ -116,7 +119,7 @@ def train_model(model):
             # Update parameters
             trainer.step(data.shape[0])
 
-            if stop_training_after > 0 and batch_num > stop_training_after:
+            if STOP_TRAINING_AFTER > 0 and batch_num > STOP_TRAINING_AFTER:
                 break
 
             # Print loss once in a while
@@ -148,40 +151,11 @@ def get_sample_point():
         return data, label
 
 
-#def relay_micro_build(func, dev_config, params=None):
-#    """Create a graph runtime module with a micro device context from a Relay function.
-#
-#    Parameters
-#    ----------
-#    func : relay.Function
-#        function to compile
-#
-#    dev_config : TODO
-#        TODO
-#
-#    params : dict
-#        input parameters that do not change during inference
-#
-#    Return
-#    ------
-#    mod : tvm.module.Module
-#        graph runtime module for the target device
-#    """
-#    with tvm.build_config(disable_vectorize=True):
-#        graph, c_mod, params = relay.build(func, target="c", params=params)
-#    print(c_mod.get_source())
-#    micro_mod = micro.create_micro_mod(c_mod, dev_config)
-#    ctx = tvm.micro_dev(0)
-#    mod = graph_runtime.create(graph, micro_mod, ctx)
-#    mod.set_input(**params)
-#    return mod
-
-
-if should_train:
+if SHOULD_TRAIN:
     cifar10_cnn = build_cifar10_cnn(gluon.nn.HybridSequential())
     cifar10_cnn.hybridize()
     train_model(cifar10_cnn)
-    cifar10_cnn.export(model_name, epoch=1)
+    cifar10_cnn.export(MODEL_NAME, epoch=1)
 
 ##########
 # CONFIG #
@@ -189,7 +163,7 @@ if should_train:
 from collections import OrderedDict
 from tvm.micro.device.arm import stm32f746xx
 from tvm.micro.device.arm.stm32f746xx import MemConstraint
-DEV_CONFIG = stm32f746xx.default_config('127.0.0.1', 6668)
+DEV_CONFIG = stm32f746xx.default_config('127.0.0.1', 6669)
 DEV_CONFIG['mem_layout'] = stm32f746xx.gen_mem_layout(OrderedDict([
     ('text', (10000, MemConstraint.ABSOLUTE_BYTES)),
     ('rodata', (100, MemConstraint.ABSOLUTE_BYTES)),
@@ -248,7 +222,7 @@ reset_gdbinit()
 #print("[Import Model]")
 #with warnings.catch_warnings():
 #    warnings.simplefilter("ignore")
-#    cifar10_cnn = gluon.nn.SymbolBlock.imports(f"{model_name}-symbol.json", ['data'], f"{model_name}-0001.params", ctx=ctx)
+#    cifar10_cnn = gluon.nn.SymbolBlock.imports(f"{MODEL_NAME}-symbol.json", ['data'], f"{MODEL_NAME}-0001.params", ctx=ctx)
 #
 ## Convert to Relay
 #mod, params = relay.frontend.from_mxnet(
@@ -258,165 +232,52 @@ reset_gdbinit()
 #with relay.quantize.qconfig(skip_k_conv=0, round_for_shift=True):
 #    mod = relay.module.Module.from_expr(relay.quantize.quantize(mod['main'], params))
 
-#mod = relay.fromtext("""
-#v0.0.4
-#def @main(%data: Tensor[(1, 3, 32, 32), int8],
-#    %hybridsequential0_conv0_weight: Tensor[(32, 3, 5, 5), int8],
-#    %hybridsequential0_conv0_bias: Tensor[(32), int8],
-#    %hybridsequential0_conv1_weight: Tensor[(32, 32, 5, 5), int8],
-#    %hybridsequential0_conv1_bias: Tensor[(32), int8],
-#    %hybridsequential0_conv2_weight: Tensor[(64, 32, 5, 5), int8],
-#    %hybridsequential0_conv2_bias: Tensor[(64), int8],
-#    %hybridsequential0_dense0_weight: Tensor[(10, 576), int8],
-#    %hybridsequential0_dense0_bias: Tensor[(10), int8]) -> Tensor[(1, 10), int8] {
-#  %0 = nn.conv2d(%data, %hybridsequential0_conv0_weight, padding=[2, 2], channels=32, kernel_size=[5, 5]) /* ty=Tensor[(1, 32, 32, 32), int8] */;
-#  %1 = nn.bias_add(%0, %hybridsequential0_conv0_bias) /* ty=Tensor[(1, 32, 32, 32), int8] */;
-#  %2 = nn.max_pool2d(%1, pool_size=[3, 3], strides=[2, 2]) /* ty=Tensor[(1, 32, 15, 15), int8] */;
-#  %3 = nn.relu(%2) /* ty=Tensor[(1, 32, 15, 15), int8] */;
-#  %4 = nn.conv2d(%3, %hybridsequential0_conv1_weight, padding=[2, 2], channels=32, kernel_size=[5, 5]) /* ty=Tensor[(1, 32, 15, 15), int8] */;
-#  %5 = nn.bias_add(%4, %hybridsequential0_conv1_bias) /* ty=Tensor[(1, 32, 15, 15), int8] */;
-#  %6 = nn.relu(%5) /* ty=Tensor[(1, 32, 15, 15), int8] */;
-#  %7 = nn.avg_pool2d(%6, pool_size=[3, 3], strides=[2, 2], count_include_pad=True) /* ty=Tensor[(1, 32, 7, 7), int8] */;
-#  %8 = nn.conv2d(%7, %hybridsequential0_conv2_weight, padding=[2, 2], channels=64, kernel_size=[5, 5]) /* ty=Tensor[(1, 64, 7, 7), int8] */;
-#  %9 = nn.bias_add(%8, %hybridsequential0_conv2_bias) /* ty=Tensor[(1, 64, 7, 7), int8] */;
-#  %10 = nn.relu(%9) /* ty=Tensor[(1, 64, 7, 7), int8] */;
-#  %11 = nn.avg_pool2d(%10, pool_size=[3, 3], strides=[2, 2], count_include_pad=True) /* ty=Tensor[(1, 64, 3, 3), int8] */;
-#  %12 = nn.batch_flatten(%11) /* ty=Tensor[(1, 3136), int8] */;
-#  %13 = nn.dense(%12, %hybridsequential0_dense0_weight, units=10) /* ty=Tensor[(1, 10), int8] */;
-#  nn.bias_add(%13, %hybridsequential0_dense0_bias, axis=-1) /* ty=Tensor[(1, 10), int8] */
-#}
-#""")
-
-#mod = relay.fromtext("""
-#v0.0.4
-#def @main(%data: Tensor[(1, 3, 32, 32), int8],
-#    %hybridsequential0_conv0_weight: Tensor[(32, 3, 5, 5), int8],
-#    %hybridsequential0_conv0_bias: Tensor[(32), int32],
-#    %hybridsequential0_conv1_weight: Tensor[(32, 32, 5, 5), int8],
-#    %hybridsequential0_conv1_bias: Tensor[(32), int32],
-#    %hybridsequential0_conv2_weight: Tensor[(64, 32, 5, 5), int8],
-#    %hybridsequential0_conv2_bias: Tensor[(64), int32],
-#    %hybridsequential0_dense0_weight: Tensor[(10, 576), int8],
-#    %hybridsequential0_dense0_bias: Tensor[(10), int32]) -> Tensor[(1, 10), int8] {
-#  %0 = nn.conv2d(%data, %hybridsequential0_conv0_weight, padding=[2, 2], channels=32, kernel_size=[5, 5], out_dtype="int32");
-#  %1 = nn.bias_add(%0, %hybridsequential0_conv0_bias);
-#  %2 = nn.max_pool2d(%1, pool_size=[3, 3], strides=[2, 2]);
-#  %3 = nn.relu(%2);
-#  %4 = nn.conv2d(%3, %hybridsequential0_conv1_weight, padding=[2, 2], channels=32, kernel_size=[5, 5], out_dtype="int32");
-#  %5 = nn.bias_add(%4, %hybridsequential0_conv1_bias);
-#  %6 = nn.relu(%5);
-#  %7 = nn.avg_pool2d(%6, pool_size=[3, 3], strides=[2, 2], count_include_pad=True);
-#  %8 = nn.conv2d(%7, %hybridsequential0_conv2_weight, padding=[2, 2], channels=64, kernel_size=[5, 5], out_dtype="int32");
-#  %9 = nn.bias_add(%8, %hybridsequential0_conv2_bias);
-#  %10 = nn.relu(%9);
-#  %11 = nn.avg_pool2d(%10, pool_size=[3, 3], strides=[2, 2], count_include_pad=True);
-#  %12 = nn.batch_flatten(%11);
-#  %13 = nn.dense(%12, %hybridsequential0_dense0_weight, units=10, out_dtype="int32");
-#  nn.bias_add(%13, %hybridsequential0_dense0_bias, axis=-1)
-#}
-#""")
-
-# NOTE: the first convolution has a different out channel (16) than the CMSIS-NN version (32).
-whole_mod = relay.fromtext("""
+mod = relay.fromtext("""
 v0.0.4
-def @main(%data: Tensor[(1, 3, 32, 32), int8],
-    %hybridsequential0_conv0_weight: Tensor[(32, 3, 5, 5), int8],
-    %hybridsequential0_conv0_bias: Tensor[(32), int32],
-    %hybridsequential0_conv1_weight: Tensor[(32, 32, 5, 5), int8],
-    %hybridsequential0_conv1_bias: Tensor[(32), int32],
-    %hybridsequential0_conv2_weight: Tensor[(64, 32, 5, 5), int8],
-    %hybridsequential0_conv2_bias: Tensor[(64), int32],
-    %hybridsequential0_dense0_weight: Tensor[(10, 576), int8],
-    %hybridsequential0_dense0_bias: Tensor[(10), int32]) {  // -> Tensor[(1, 32, 15, 15), int8] {
-  %0 = nn.conv2d(%data, %hybridsequential0_conv0_weight, padding=[2, 2], channels=32, kernel_size=[5, 5], out_dtype="int32");
-  %1 = nn.bias_add(%0, %hybridsequential0_conv0_bias);
+def @main(%data: Tensor[(1, 3, 32, 32), uint8],
+    %mean_data: Tensor[(1, 3, 32, 32), uint8],
+    %conv0_weight: Tensor[(32, 3, 5, 5), int8],
+    %conv0_bias: Tensor[(32), int32],
+    %conv1_weight: Tensor[(32, 32, 5, 5), int8],
+    %conv1_bias: Tensor[(32), int32],
+    %conv2_weight: Tensor[(64, 32, 5, 5), int8],
+    %conv2_bias: Tensor[(64), int32],
+    %dense0_weight: Tensor[(10, 1024), int8],
+    %dense0_bias: Tensor[(10), int32]) {
+  %0 = nn.conv2d(%data - %mean_data, %conv0_weight, padding=[2, 2], channels=32, kernel_size=[5, 5], out_dtype="int32");
+  %1 = nn.bias_add(%0, %conv0_bias);
   %2 = right_shift(%1, 9);
   %3 = cast(%2, "int8");
-  %4 = nn.max_pool2d(%3, pool_size=[3, 3], strides=[2, 2]);
+  %4 = nn.max_pool2d(%3, pool_size=[3, 3], strides=[2, 2], ceil_mode=True);
   %5 = nn.relu(%4);
-  %6 = nn.conv2d(%5, %hybridsequential0_conv1_weight, padding=[2, 2], channels=32, kernel_size=[5, 5], out_dtype="int32");
-  %7 = nn.bias_add(%6, %hybridsequential0_conv1_bias);
+  %6 = nn.conv2d(%5, %conv1_weight, padding=[2, 2], channels=32, kernel_size=[5, 5], out_dtype="int32");
+  %7 = nn.bias_add(%6, %conv1_bias);
   %8 = right_shift(%7, 9);
   %9 = cast(%8, "int8");
   %10 = nn.relu(%9);
-  %11 = nn.avg_pool2d(%10, pool_size=[3, 3], strides=[2, 2], count_include_pad=True);
-  %12 = nn.conv2d(%11, %hybridsequential0_conv2_weight, padding=[2, 2], channels=64, kernel_size=[5, 5], out_dtype="int32");
-  %13 = nn.bias_add(%12, %hybridsequential0_conv2_bias);
+  %11 = nn.avg_pool2d(%10, pool_size=[3, 3], strides=[2, 2], count_include_pad=True, ceil_mode=True);
+  %12 = nn.conv2d(%11, %conv2_weight, padding=[2, 2], channels=64, kernel_size=[5, 5], out_dtype="int32");
+  %13 = nn.bias_add(%12, %conv2_bias);
   %14 = right_shift(%13, 9);
   %15 = cast(%14, "int8");
   %16 = nn.relu(%15);
-  %17 = nn.avg_pool2d(%16, pool_size=[3, 3], strides=[2, 2], count_include_pad=True);
+  %17 = nn.avg_pool2d(%16, pool_size=[3, 3], strides=[2, 2], count_include_pad=True, ceil_mode=True);
   %18 = nn.batch_flatten(%17);
-  %19 = nn.dense(%18, %hybridsequential0_dense0_weight, units=10, out_dtype="int32");
-  nn.bias_add(%19, %hybridsequential0_dense0_bias, axis=-1)
+  %19 = nn.dense(%18, %dense0_weight, units=10, out_dtype="int32");
+  nn.bias_add(%19, %dense0_bias, axis=-1)
 }
 """)
 
-#whole_mod = relay.fromtext("""
-#v0.0.4
-#def @main(%data: Tensor[(1, 3, 8, 8), int8],
-#    %hybridsequential0_conv0_weight: Tensor[(3, 3, 3, 3), int8],
-#    %hybridsequential0_conv0_bias: Tensor[(3), int32],
-#    %hybridsequential0_conv1_weight: Tensor[(3, 3, 3, 3), int8],
-#    %hybridsequential0_conv1_bias: Tensor[(3), int32]) {  // -> Tensor[(1, 8, 3, 3), int8] {
-#  // first conv
-#  %0 = nn.conv2d(%data, %hybridsequential0_conv0_weight, padding=[1, 1], channels=3, kernel_size=[3, 3], out_dtype="int32");
-#  %1 = nn.bias_add(%0, %hybridsequential0_conv0_bias);
-#  %2 = right_shift(%1, 9);
-#  %3 = cast(%2, "int8");
-#  %4 = nn.max_pool2d(%3, pool_size=[3, 3], strides=[2, 2]);
-#  %5 = nn.relu(%4);
-#  // second conv
-#  %6 = nn.conv2d(%5, %hybridsequential0_conv1_weight, padding=[1, 1], channels=3, kernel_size=[3, 3], out_dtype="int32");
-#  %7 = nn.bias_add(%6, %hybridsequential0_conv1_bias);
-#  %8 = right_shift(%7, 9);
-#  %9 = cast(%8, "int8");
-#  %10 = nn.relu(%9);
-#  %10
-#}
-#""")
-
-# TODO relay/ir/module.cc is detecting free vars. figure out why the function
-# params aren't equal to the args of calls in the body
-#good_mod = relay.fromtext("""
-#v0.0.4
-#def @main(%data: Tensor[(1, 3, 16, 16), int8],
-#    %hybridsequential0_conv0_weight: Tensor[(32, 3, 5, 5), int8],
-#    %hybridsequential0_conv0_bias: Tensor[(32), int32]) -> Tensor[(1, 32, 7, 7), int8] {
-#  %0 = nn.conv2d(%data, %hybridsequential0_conv0_weight, padding=[2, 2], channels=32, kernel_size=[5, 5], out_dtype="int32");
-#  %1 = nn.bias_add(%0, %hybridsequential0_conv0_bias);
-#  %2 = right_shift(%1, 9);
-#  %3 = cast(%2, "int8");
-#  %4 = nn.max_pool2d(%3, pool_size=[3, 3], strides=[2, 2]);
-#  nn.relu(%4)
-#}
-#""")
-#
-#bad_mod = relay.fromtext("""
-#v0.0.4
-#def @main(%data: Tensor[(1, 32, 7, 7), int8],
-#    %hybridsequential0_conv1_weight: Tensor[(32, 32, 5, 5), int8],
-#    %hybridsequential0_conv1_bias: Tensor[(32), int32]) -> Tensor[(1, 32, 7, 7), int8] {
-#  %0 = nn.conv2d(%data, %hybridsequential0_conv1_weight, padding=[2, 2], channels=32, kernel_size=[5, 5], out_dtype="int32");
-#  %1 = nn.bias_add(%0, %hybridsequential0_conv1_bias);
-#  %2 = right_shift(%1, 9);
-#  %3 = cast(%2, "int8");
-#  nn.relu(%3)
-#}
-#""")
+USE_RANDOM_PARAMS = False
 
 # generate random input
-#param = good_mod['main'].params[0]
-param = whole_mod['main'].params[0]
+param = mod['main'].params[0]
 shape = list(map(lambda x: x.value, param.checked_type.shape))
 dtype = param.checked_type.dtype
 assert 'data' in param.name_hint
-image_np = tvm.nd.array(np.random.randint(-127, 127, size=shape, dtype=dtype), tvm.cpu(0))
+image_np = tvm.nd.array(np.random.randint(80, 180, size=shape, dtype=dtype), tvm.cpu(0))
 
-#for i, mod in enumerate([whole_mod, good_mod, bad_mod]):
-
-for i, mod in enumerate([whole_mod]):
-    print(mod)
+if USE_RANDOM_PARAMS:
     # generate random params
     params = {}
     for param in mod['main'].params[1:]:
@@ -426,56 +287,61 @@ for i, mod in enumerate([whole_mod]):
             result = tvm.nd.array(np.random.randint(-3, 3, size=shape, dtype=dtype), tvm.cpu(0))
         elif 'weight' in param.name_hint:
             result = tvm.nd.array(np.random.randint(-30, 30, size=shape, dtype=dtype), tvm.cpu(0))
+        elif 'mean' in param.name_hint:
+            result = tvm.nd.array(np.random.randint(130, 140, size=shape, dtype=dtype), tvm.cpu(0))
         else:
             assert False
         params[param.name_hint] = result
-    print(image_np)
-    print(params)
+else:
+    with open('cifar10_cnn_params.json', 'r') as f:
+        params = json.load(f)
+    for formal_param in mod['main'].params[1:]:
+        shape = list(map(lambda x: x.value, formal_param.checked_type.shape))
+        dtype = formal_param.checked_type.dtype
+        name = formal_param.name_hint
+        print(name)
+        # NCHW -> NHWC
+        params[name] = tvm.nd.array(np.array(params[name]).astype(dtype).reshape(shape), tvm.cpu(0))
 
-    # Begin a session
-    print("[Initting]")
-    with micro.Session(DEV_CONFIG) as sess:
-        # Build the function
-        print("[Building]")
-        #assert False, "TODO it's falling back to a kernel with a workspace that's too large. try fucking with the autotvm log to synthesize a config that matches"
-        from tvm import autotvm
-        DEVICE_ID = 'arm.stm32f746xx'
-        E2E_LOG_FILE_NAME = f'{DEVICE_ID}.e2e.log'
-        with autotvm.apply_history_best(E2E_LOG_FILE_NAME):
-            with TARGET:
-                graph_mod = relay_micro_build(mod['main'], DEV_CONFIG, TARGET, params=params)
-        #if i == 0:
-        #    continue
 
-        # Execute with `image` as the input.
-        print("[Executing]")
-        sess.get_last_batch_time()
-        ctx = tvm.micro_dev(0)
-        ctx.sync()
-        graph_mod.run(data=image_np)
-        ctx.sync()
-        exec_time = sess.get_last_batch_time()
-        print(f'  Model execution took {exec_time} milliseconds')
+# Begin a session
+print("[Initting]")
+with micro.Session(DEV_CONFIG) as sess:
+    # Build the function
+    print("[Building]")
+    from tvm import autotvm
+    DEVICE_ID = 'arm.stm32f746xx'
+    E2E_LOG_FILE_NAME = f'{DEVICE_ID}.e2e.log'
+    with autotvm.apply_history_best(E2E_LOG_FILE_NAME):
+        with TARGET:
+            graph_mod = relay_micro_build(mod['main'], DEV_CONFIG, TARGET, params=params)
 
-        # Get output
-        micro_output_np = graph_mod.get_output(0).asnumpy()
-        #print(micro_output_np)
+    # Execute with `image` as the input.
+    print("[Executing]")
+    sess.get_last_batch_time()
+    ctx = tvm.micro_dev(0)
+    ctx.sync()
+    graph_mod.run(data=image_np)
+    ctx.sync()
+    exec_time = sess.get_last_batch_time()
+    print(f'  Model execution took {exec_time} milliseconds')
 
-    with relay.build_config(opt_level=3, disabled_pass={"AlterOpLayout"}):
-        intrp_output_np = eval_relay_intrp(
-                mod, [image_np] + [params[param.name_hint] for param in mod['main'].params[1:]])
-        cpu_graph_output_np = eval_cpu_graph_runtime(mod, params, {'data': image_np})
-    #print(intrp_output_np)
-    #print()
-    #print(cpu_graph_output_np)
+    # Get output
+    micro_output_np = graph_mod.get_output(0).asnumpy()
 
-    #tvm.testing.assert_allclose(intrp_output_np.astype('float32'), cpu_graph_output_np.astype('float32'))
-    #tvm.testing.assert_allclose(micro_output_np.astype('float32'), intrp_output_np.astype('float32'))
-    print('intrp matches CPU? ' + str(np.allclose(intrp_output_np.astype('float32'), cpu_graph_output_np.astype('float32'))))
-    print('micro matches intrp? ' + str(np.allclose(micro_output_np.astype('float32'), intrp_output_np.astype('float32'))))
+with relay.build_config(opt_level=3, disabled_pass={"AlterOpLayout"}):
+    intrp_output_np = eval_relay_intrp(
+        mod, [image_np] + [params[param.name_hint] for param in mod['main'].params[1:]])
+    cpu_graph_output_np = eval_cpu_graph_runtime(mod, params, {'data': image_np})
+#print(intrp_output_np)
+#print()
+#print(cpu_graph_output_np)
 
-    # set input of next run to be output of this run
-    image_np = tvm.nd.array(micro_output_np, tvm.cpu(0))
+#tvm.testing.assert_allclose(intrp_output_np.astype('float32'), cpu_graph_output_np.astype('float32'))
+#tvm.testing.assert_allclose(micro_output_np.astype('float32'), intrp_output_np.astype('float32'))
+print('intrp matches CPU? ' + str(np.allclose(intrp_output_np.astype('float32'), cpu_graph_output_np.astype('float32'))))
+print('micro matches intrp? ' + str(np.allclose(micro_output_np.astype('float32'), intrp_output_np.astype('float32'))))
+
 
 def load_outputs(path):
     with open(path, 'rb') as f:
