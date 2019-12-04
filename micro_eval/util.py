@@ -1,3 +1,7 @@
+import json
+
+import numpy as np
+
 import tvm
 import topi
 from tvm import autotvm, relay
@@ -48,13 +52,13 @@ def conv2d_arm_micro_nchw(cfg, data, kernel, strides, padding, dilation, layout,
     #cfg.define_reorder("reorder_0",
     #        [n, co, oh, ow, ci, kh, kw, vh, vw, vc],
     #        policy='all')
-    cfg.define_reorder("reorder_0",
-            [n, co, oh, ow, ci, kh, kw, vh, vw, vc],
-            policy='candidate', candidate=[
-                [n, co, oh, ow, ci, kh, kw, vh, vw, vc],
-                [n, co, oh, ow, ci, kh, kw, vc, vh, vw],
-                [n, co, oh, ow, ci, vh, vw, vc, kh, kw],
-                [n, co, oh, ow, ci, vc, vh, vw, kh, kw]])
+    #cfg.define_reorder("reorder_0",
+    #        [n, co, oh, ow, ci, kh, kw, vh, vw, vc],
+    #        policy='candidate', candidate=[
+    #            [n, co, oh, ow, ci, kh, kw, vh, vw, vc],
+    #            [n, co, oh, ow, ci, kh, kw, vc, vh, vw],
+    #            [n, co, oh, ow, ci, vh, vw, vc, kh, kw],
+    #            [n, co, oh, ow, ci, vc, vh, vw, kh, kw]])
 
     #cfg.define_knob("auto_unroll_max_step", [0, 256, 512, 1024])
     cfg.define_knob("auto_unroll_max_step", [0, 16, 32, 64, 128, 256])
@@ -93,7 +97,7 @@ def schedule_conv2d_arm_micro_nchw(cfg, outs):
         oh, vh = cfg['tile_oh'].apply(s, conv, oh)
         ow, vw = cfg['tile_ow'].apply(s, conv, ow)
 
-        cfg["reorder_0"].apply(s, conv, [n, co, oh, ow, ci, kh, kw, vh, vw, vc])
+        #cfg["reorder_0"].apply(s, conv, [n, co, oh, ow, ci, kh, kw, vh, vw, vc])
         cfg["ann_reduce"].apply(s, conv, [kh, kw],
                                 axis_lens=[get_const_int(kh.dom.extent),
                                            get_const_int(kw.dom.extent)],
@@ -151,6 +155,140 @@ def conv2d_arm_micro_nchw_topi_task(*args, **kwargs):
 #    autotvm.task.register(conv2d_arm_micro_nchw_template, "topi_nn_conv2d", override=True)
 
 
+def gen_cifar10_cnn(use_random_params=False):
+    # TODO change relay/op/tensor/unary.cc _make.clip to accept exprs instead of doubles
+    # TODO discrepancies between outputs might be a result of the bias_add op
+    # not matching the semantics of the CMSIS bias add.
+    mod = relay.fromtext("""
+    v0.0.4
+    def @main(%data: Tensor[(1, 3, 32, 32), uint8],
+        %mean_data: Tensor[(1, 3, 32, 32), uint8],
+        %conv0_weight: Tensor[(32, 3, 5, 5), int8],
+        %conv0_bias: Tensor[(32), int8],
+        %conv1_weight: Tensor[(32, 32, 5, 5), int8],
+        %conv1_bias: Tensor[(32), int8],
+        %conv2_weight: Tensor[(64, 32, 5, 5), int8],
+        %conv2_bias: Tensor[(64), int8],
+        %dense0_weight: Tensor[(10, 1024), int8],
+        %dense0_bias: Tensor[(10), int8]) {
+      %0 = cast(cast(%data, "int16") - cast(%mean_data, "int16"), "int8");
+      %1 = nn.conv2d(%0, %conv0_weight, padding=[2, 2], channels=32, kernel_size=[5, 5], out_dtype="int32");
+      %2 = nn.bias_add(%1, cast(%conv0_bias, "int32"));
+      %3 = right_shift(%2, 9);
+      %4 = cast(%3, "int8");
+      %5 = nn.max_pool2d(%4, pool_size=[3, 3], strides=[2, 2], ceil_mode=True);
+      %6 = nn.relu(%5);
+      %7 = nn.conv2d(%6, %conv1_weight, padding=[2, 2], channels=32, kernel_size=[5, 5], out_dtype="int32");
+      %8 = nn.bias_add(%7, cast(%conv1_bias, "int32"));
+      %9 = right_shift(%8, 9);
+      %10 = cast(%9, "int8");
+      %11 = nn.relu(%10);
+      %12 = nn.avg_pool2d(%11, pool_size=[3, 3], strides=[2, 2], count_include_pad=True, ceil_mode=True);
+      %13 = nn.conv2d(%12, %conv2_weight, padding=[2, 2], channels=64, kernel_size=[5, 5], out_dtype="int32");
+      %14 = nn.bias_add(%13, cast(%conv2_bias, "int32"));
+      %15 = right_shift(%14, 9);
+      %16 = cast(%15, "int8");
+      %17 = nn.relu(%16);
+      %18 = nn.avg_pool2d(%17, pool_size=[3, 3], strides=[2, 2], count_include_pad=True, ceil_mode=True);
+      %19 = nn.batch_flatten(%18);
+      %20 = nn.dense(%19, %dense0_weight, units=10, out_dtype="int32");
+      %21 = nn.bias_add(%20, left_shift(cast(%dense0_bias, "int32"), 3), axis=-1);
+      %22 = right_shift(%21, 5);
+      cast(%22, "int8")
+    }
+    """)
+
+    if use_random_params:
+        # generate random params
+        params = {}
+        for param in mod['main'].params[1:]:
+            shape = list(map(lambda x: x.value, param.checked_type.shape))
+            dtype = param.checked_type.dtype
+            if 'bias' in param.name_hint:
+                result = tvm.nd.array(np.random.randint(-3, 3, size=shape, dtype=dtype), tvm.cpu(0))
+            elif 'weight' in param.name_hint:
+                result = tvm.nd.array(np.random.randint(-30, 30, size=shape, dtype=dtype), tvm.cpu(0))
+            elif 'mean' in param.name_hint:
+                result = tvm.nd.array(np.random.randint(130, 140, size=shape, dtype=dtype), tvm.cpu(0))
+            else:
+                assert False
+            params[param.name_hint] = result
+    else:
+        with open('cifar10_cnn_params.json', 'r') as f:
+            params = json.load(f)
+        for formal_param in mod['main'].params[1:]:
+            shape = list(map(lambda x: x.value, formal_param.checked_type.shape))
+            dtype = formal_param.checked_type.dtype
+            name = formal_param.name_hint
+            # NCHW -> NHWC
+            orig_np = np.array(params[name]).astype(dtype)
+            print(name)
+            print(orig_np.shape)
+            if name == 'mean_data':
+                # NCHW
+                # N == 0
+                # C == 1
+                # H == 2
+                # W == 3
+                # NHWC (0, 2, 3, 1)
+
+                # NHWC
+                # N == 0
+                # H == 1
+                # W == 2
+                # C == 3
+                # NCHW (0, 3, 1, 2)
+                orig_np = orig_np.reshape((shape[0], shape[2], shape[3], shape[1]))
+                print(orig_np.shape)
+                orig_np = orig_np.transpose(0, 3, 1, 2)
+                print(orig_np.shape)
+            elif name == 'conv0_weight':
+                # CO, CI, KW, KH
+                # CO == 0
+                # CI == 1
+                # KW == 2
+                # KH == 3
+                # CI, KW, KH, CO (1, 2, 3, 0)
+
+                # CI, KW, KH, CO
+                # CI == 0
+                # KW == 1
+                # KH == 2
+                # CO == 3
+                # CO, CI, KW, KH (3, 0, 1, 2)
+                orig_np = orig_np.reshape((shape[1], shape[2], shape[3], shape[0]))
+                print(orig_np.shape)
+                orig_np = orig_np.transpose(3, 0, 1, 2)
+                print(orig_np.shape)
+            elif name == 'conv0_bias':
+                pass
+            elif name == 'conv1_weight':
+                orig_np = orig_np.reshape((shape[1], shape[2], shape[3], shape[0]))
+                print(orig_np.shape)
+                orig_np = orig_np.transpose(3, 0, 1, 2)
+                print(orig_np.shape)
+            elif name == 'conv1_bias':
+                pass
+            elif name == 'conv2_weight':
+                orig_np = orig_np.reshape((shape[1], shape[2], shape[3], shape[0]))
+                print(orig_np.shape)
+                orig_np = orig_np.transpose(3, 0, 1, 2)
+                print(orig_np.shape)
+            elif name == 'conv2_bias':
+                pass
+            elif name == 'dense0_weight':
+                orig_np = orig_np.reshape((shape[1], shape[0]))
+                print(orig_np.shape)
+                orig_np = orig_np.transpose(1, 0)
+                print(orig_np.shape)
+            elif name == 'dense0_bias':
+                pass
+            else:
+                assert False
+            params[name] = tvm.nd.array(orig_np, tvm.cpu(0))
+    return mod, params
+
+
 DEBUG_MODE = False
 
 def relay_micro_build(func, dev_config, target, params=None):
@@ -204,3 +342,93 @@ def eval_cpu_graph_runtime(mod, params, input_dict):
     graph_mod.set_input(**params)
     graph_mod.run(**input_dict)
     return graph_mod.get_output(0).asnumpy()
+
+
+def gen_workload_desc_from_task(task):
+    if 'conv2d' not in task[1]:
+        return None
+    workload = ['conv2d']
+    args = task[2]
+    for arg in args:
+        if isinstance(arg, list) and arg[0] == 'TENSOR':
+            res = list(arg[1])
+            res.append(arg[2])
+        else:
+            res = arg
+        workload.append(res)
+    return workload
+
+
+def tuplify(elem):
+    if isinstance(elem, list):
+        return tuple(list(map(tuplify, elem)))
+    else:
+        return elem
+
+
+def custom_pick_best(in_log_file_name, out_log_file_name, top_k=1):
+    workload_to_best = {}
+    with open(in_log_file_name, 'r') as f:
+        for line in f:
+            entry = json.loads(line)
+            workload = gen_workload_desc_from_task(entry['i'])
+            entry['i'][4] = workload
+            hashable_workload = tuplify(workload)
+            if hashable_workload not in workload_to_best:
+                workload_to_best[hashable_workload] = []
+
+            if len(workload_to_best[hashable_workload]) < top_k:
+                workload_to_best[hashable_workload].append(entry)
+            else:
+                worst_entry = workload_to_best[hashable_workload][0]
+                worst_entry_idx = 0
+                for i, top_entry in enumerate(workload_to_best[hashable_workload]):
+                    if top_entry['r'][0][0] > worst_entry['r'][0][0]:
+                        worst_entry = top_entry
+                        worst_entry_idx = i
+                if entry['r'][0][0] < worst_entry['r'][0][0]:
+                    workload_to_best[hashable_workload][worst_entry_idx] = entry
+
+    with open(out_log_file_name, 'w') as f:
+        for entries in workload_to_best.values():
+            for entry in entries:
+                f.write(json.dumps(entry) + '\n')
+
+
+def reset_gdbinit(dev_config):
+    if 'server_port' not in dev_config:
+        return
+    with open('/home/lweber/gdb-conf/.gdbinit', 'w') as f:
+        gdb_port = dev_config['server_port'] - 3333
+        gdbinit_contents = (
+f"""layout src
+target remote localhost:{gdb_port}
+set $pc = UTVMInit
+break UTVMDone
+
+define print_utvm_args
+    set $i = 0
+    while $i < utvm_num_tasks
+        set $j = 0
+        eval "print \\"TASK %d ARGS\\"", $i
+        eval "set $num_task_args = utvm_tasks[$i].num_args"
+        print "num_args: %d", $num_task_args
+        while $j < $num_task_args
+            eval "set $num_bits = ((TVMArray*) utvm_tasks[0].arg_values[0].v_handle)->dtype.bits"
+            if $num_bits == 8
+                print "dtype: int8"
+                eval "p/d *((int8_t*) ((TVMArray*) utvm_tasks[$i].arg_values[$j].v_handle)->data)@16"
+            end
+            if $num_bits == 32
+                print "dtype: int32"
+                eval "p/d *((int32_t*) ((TVMArray*) utvm_tasks[$i].arg_values[$j].v_handle)->data)@16"
+            end
+            set $j = $j + 1
+        end
+        set $i = $i + 1
+    end
+end
+
+print_utvm_args
+""")
+        f.write(gdbinit_contents)

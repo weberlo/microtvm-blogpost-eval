@@ -1,0 +1,25 @@
+[Sample 0]
+  Model execution took 278.516529 milliseconds and 30967603.0 cycles
+  Output: [[ -3 -17  12   4  18   3   1  -9  -4 -13]]
+  Prediction was Deer
+  Actual was Frog
+[Sample 1]
+  Model execution took 274.606922 milliseconds and 30967549.0 cycles
+  Output: [[ -4 -19  11   5  16   2   2  -9  -1 -12]]
+  Prediction was Deer
+  Actual was Frog
+[Sample 2]
+  Model execution took 273.83063699999997 milliseconds and 30967555.0 cycles
+  Output: [[ -6 -22  12   3  19   4   3 -12  -1 -12]]
+  Prediction was Deer
+  Actual was Dog
+[Sample 3]
+  Model execution took 272.826285 milliseconds and 30967545.0 cycles
+  Output: [[ -3 -19  12   3  18   0   2  -6  -2 -14]]
+  Prediction was Deer
+  Actual was Horse
+[Sample 4]
+  Model execution took 272.637743 milliseconds and 30967549.0 cycles
+  Output: [[ -5 -19  16   2  21  -2   3  -8  -3 -13]]
+  Prediction was Deer
+  Actual was Car

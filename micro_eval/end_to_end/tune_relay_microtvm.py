@@ -24,6 +24,7 @@ TODO More docs
 import logging
 import os
 import sys
+from collections import OrderedDict
 
 from mxnet.gluon.model_zoo import vision
 import numpy as np
@@ -38,6 +39,8 @@ from tvm.autotvm.tuner import XGBTuner, GATuner, RandomTuner, GridSearchTuner
 
 import tvm.micro as micro
 from tvm.micro import create_micro_mod
+import tvm.micro.device.arm.stm32f746xx as stm32f746xx
+from tvm.micro.device.arm.stm32f746xx import MemConstraint
 
 from tvm.relay import transform
 from tvm.relay.op import nn
@@ -50,7 +53,7 @@ from topi.nn.pad import pad
 from topi.nn.util import get_pad_tuple
 from topi.util import simplify, get_const_tuple, traverse_inline
 
-from micro_eval.util import relay_micro_build
+from micro_eval.util import gen_cifar10_cnn, relay_micro_build, custom_pick_best
 
 ################
 # Instructions #
@@ -97,32 +100,40 @@ from micro_eval.util import relay_micro_build
 logging.getLogger('autotvm').setLevel(logging.DEBUG)
 logging.getLogger('autotvm').addHandler(logging.StreamHandler(sys.stdout))
 
-#DEV_CONFIG = micro.device.arm.stm32f746xx.default_config('127.0.0.1', 6666)
-DEV_CONFIG = micro.device.arm.stm32f746xx.default_config('127.0.0.1', 6668)
+DEV_CONFIG = micro.device.arm.stm32f746xx.default_config('127.0.0.1', 6666)
+DEV_CONFIG['mem_layout'] = micro.device.arm.stm32f746xx.gen_mem_layout(OrderedDict([
+    ('text', (18000, MemConstraint.ABSOLUTE_BYTES)),
+    ('rodata', (100, MemConstraint.ABSOLUTE_BYTES)),
+    ('data', (100, MemConstraint.ABSOLUTE_BYTES)),
+    ('bss', (600, MemConstraint.ABSOLUTE_BYTES)),
+    ('args', (4096, MemConstraint.ABSOLUTE_BYTES)),
+    ('heap', (100.0, MemConstraint.WEIGHT)),
+    ('workspace', (132000, MemConstraint.ABSOLUTE_BYTES)),
+    ('stack', (32, MemConstraint.ABSOLUTE_BYTES)),
+]))
 
 DEVICE_ID = 'arm.stm32f746xx'
 TARGET = tvm.target.create('c -device=micro_dev')
 
 #N_TRIAL = 1500
 #EARLY_STOPPING = 800
-N_TRIAL = 10
-EARLY_STOPPING = 9
+N_TRIAL = 600
+EARLY_STOPPING = 400
 # we only need one per trial because the timings are cycle-accurate
 N_PER_TRIAL = 15
 # change this to the number of boards you have attached
 #N_PARALLEL = 9
-N_PARALLEL = 1
 E2E_LOG_FILE_NAME = f'{DEVICE_ID}.e2e.log'
 
 TRACKER_ADDR = '0.0.0.0'
 TRACKER_PORT = 9190
 
-INPUT_SHAPE = (1, 3, 32, 32)
+#INPUT_SHAPE = (1, 3, 32, 32)
 
 TUNE_OPS = [relay.op.nn.conv2d]
 
-N, H, W, CO, CI, KH, KW = 1, 32, 32, 3, 3, 5, 5
-STRIDES, PADDING, DILATION = (1, 1), (1, 1), 1
+#N, H, W, CO, CI, KH, KW = 1, 32, 32, 3, 3, 5, 5
+#STRIDES, PADDING, DILATION = (1, 1), (1, 1), 1
 LAYOUT = 'NCHW'
 #IN_DTYPE = 'float32'
 #OUT_DTYPE = 'float32'
@@ -130,7 +141,7 @@ IN_DTYPE = 'int8'
 OUT_DTYPE = 'int32'
 # disable timeouts because JTAG is slow
 TIMEOUT = 0
-assert N == 1, "Only consider batch_size = 1 in this template"
+#assert N == 1, "Only consider batch_size = 1 in this template"
 
 #############
 # Debugging #
@@ -154,41 +165,53 @@ reset_gdbinit()
 # Autotuning/Eval #
 ###################
 
-def build_conv2d_relay():
-    N, H, W, CO, CI = 1, 32, 32, 16, 3
-    KH, KW = 5, 5
-    STRIDES, PADDING, DILATION = (1, 1), (2, 2), (1, 1)
-    KERNEL_SIZE = (KH, KW)
-    DATA_SHAPE = (N, CI, H, W)
-    KERNEL_SHAPE = (CO, CI, KH, KW)
-    BIAS_SHAPE = (CO,)
-    OUTPUT_SHAPE = (N, H, W, CO)
+#def gen_conv2d_relay():
+#    N, H, W, CO, CI = 1, 32, 32, 16, 3
+#    KH, KW = 5, 5
+#    STRIDES, PADDING, DILATION = (1, 1), (2, 2), (1, 1)
+#    KERNEL_SIZE = (KH, KW)
+#    DATA_SHAPE = (N, CI, H, W)
+#    KERNEL_SHAPE = (CO, CI, KH, KW)
+#    BIAS_SHAPE = (CO,)
+#    OUTPUT_SHAPE = (N, H, W, CO)
+#
+#    #assert False, "we might need to use NCHW for micro and interp, because the bias add causes problems"
+#    # Construct Relay program (used for micro and interpreter eval).
+#    data_var = relay.var("data", shape=DATA_SHAPE, dtype=IN_DTYPE)
+#    kernel_var = relay.var("kernel", shape=KERNEL_SHAPE, dtype=IN_DTYPE)
+#    bias_var = relay.var("bias", shape=BIAS_SHAPE, dtype=OUT_DTYPE)
+#    conv_expr = relay.nn.conv2d(
+#            data_var, kernel_var,
+#            kernel_size=KERNEL_SIZE,
+#            strides=STRIDES,
+#            padding=PADDING,
+#            dilation=DILATION,
+#            channels=CO,
+#            data_layout=LAYOUT,
+#            out_layout=LAYOUT,
+#            out_dtype=OUT_DTYPE)
+#    func = relay.Function(relay.analysis.free_vars(conv_expr), conv_expr)
+#    mod = relay.Module.from_expr(func)
+#    mod = transform.InferType()(mod)
+#    return mod
 
-    #assert False, "we might need to use NCHW for micro and interp, because the bias add causes problems"
-    # Construct Relay program (used for micro and interpreter eval).
-    data_var = relay.var("data", shape=DATA_SHAPE, dtype=IN_DTYPE)
-    kernel_var = relay.var("kernel", shape=KERNEL_SHAPE, dtype=IN_DTYPE)
-    bias_var = relay.var("bias", shape=BIAS_SHAPE, dtype=OUT_DTYPE)
-    conv_expr = relay.nn.conv2d(
-            data_var, kernel_var,
-            kernel_size=KERNEL_SIZE,
-            strides=STRIDES,
-            padding=PADDING,
-            dilation=DILATION,
-            channels=CO,
-            data_layout=LAYOUT,
-            out_layout=LAYOUT,
-            out_dtype=OUT_DTYPE)
-    func = relay.Function(relay.analysis.free_vars(conv_expr), conv_expr)
-    mod = relay.Module.from_expr(func)
-    mod = transform.InferType()(mod)
-    return mod
+def get_num_devices(dev_id):
+    conn = rpc.connect_tracker(TRACKER_ADDR, TRACKER_PORT)
+    summary = conn.text_summary()
+    num_connected = 0
+    for line in summary.split('\n'):
+        if 'Queue Status' in line:
+            break
+        if dev_id in line:
+            num_connected += 1
+    return num_connected
 
 
 def tune_model(tasks):
+    n_parallel = get_num_devices(DEVICE_ID)
     print('[Tuning]')
     for i in range(len(tasks)):
-        if 'conv2d' in task.name:
+        if 'conv2d' in tasks[i].name:
             tasks[i] = autotvm.task.create(
                     tasks[i].name,
                     tasks[i].args,
@@ -199,7 +222,7 @@ def tune_model(tasks):
     measure_option = autotvm.measure_option(
             builder=autotvm.LocalBuilder(
                 build_func=tvm.micro.cross_compiler(DEV_CONFIG, micro.LibType.OPERATOR)),
-            runner=autotvm.RPCRunner(DEVICE_ID, TRACKER_ADDR, TRACKER_PORT, n_parallel=N_PARALLEL, number=N_PER_TRIAL, timeout=TIMEOUT)
+            runner=autotvm.RPCRunner(DEVICE_ID, TRACKER_ADDR, TRACKER_PORT, n_parallel=n_parallel, number=N_PER_TRIAL, timeout=TIMEOUT)
             )
 
     # create tmp log file
@@ -219,17 +242,18 @@ def tune_model(tasks):
                     autotvm.callback.progress_bar(N_TRIAL, prefix=prefix),
                     autotvm.callback.log_to_file(tmp_log_file)])
 
-    print("\nBest configs:")
-    for i, task in enumerate(reversed(tasks)):
-        # show best config from tuning
-        dispatch_context = autotvm.apply_history_best(E2E_LOG_FILE_NAME)
-        best_config = dispatch_context.query(task.target, task.workload)
-        print(f'  task.target: {task.target}')
-        print(f'  task {i}: {best_config}')
+    #print("\nBest configs:")
+    #for i, task in enumerate(reversed(tasks)):
+    #    # show best config from tuning
+    #    dispatch_context = autotvm.apply_history_best(E2E_LOG_FILE_NAME)
+    #    best_config = dispatch_context.query(task.target, task.workload)
+    #    print(f'  task.target: {task.target}')
+    #    print(f'  task {i}: {best_config}')
 
     # store best record in a cache file
-    autotvm.record.pick_best(tmp_log_file, E2E_LOG_FILE_NAME)
-    #os.remove(tmp_log_file)
+    #autotvm.record.pick_best(tmp_log_file, E2E_LOG_FILE_NAME)
+    custom_pick_best(tmp_log_file, E2E_LOG_FILE_NAME, top_k=5)
+    os.remove(tmp_log_file)
 
 
 def eval_model(mod, target):
@@ -262,36 +286,40 @@ def eval_model(mod, target):
 
 def tune_and_eval_model():
     from tvm.autotvm.task.topi_integration import TaskExtractEnv
-
     #from mxnet.gluon.model_zoo.vision import get_model
     #block = get_model('mobilenetv2_0.25', pretrained=True)
     #mod, params = relay.frontend.from_mxnet(block, shape={'data': INPUT_SHAPE}, dtype=DTYPE)
-    mod = build_conv2d_relay()
-    params = {}
 
-    #tasks = autotvm.task.extract_from_program(mod["main"], target=TARGET,
-    #        params=params, ops=TUNE_OPS)
-    #print(f'extracted {len(tasks)} tasks')
-    #assert tasks
+    #mod = gen_conv2d_relay()
+    #params = {}
 
-    #tune_model(tasks)
-    input('finished tuning...')
+    mod, params = gen_cifar10_cnn(use_random_params=False)
 
-    print('[[Evaluation]]')
-    # Load best schedules
-    print("[Tuned]")
-    with autotvm.apply_history_best(E2E_LOG_FILE_NAME):
-        with TARGET:
-            tuned_mean_time, tuned_std_dev = eval_model(mod, TARGET)
-            print("Mean inference time: %.2f ms (+/- %.2f ms)" % (tuned_mean_time, tuned_std_dev))
+    tasks = autotvm.task.extract_from_program(mod["main"], target=TARGET,
+            params=params, ops=TUNE_OPS)
 
-    print("[Untuned]")
-    untuned_mean_time, untuned_std_dev = eval_model(mod, TARGET)
-    print("Mean inference time: %.2f ms (+/- %.2f ms)" % (untuned_mean_time, untuned_std_dev))
-    print("[MicroTVM Speedup]")
-    print(f"{untuned_mean_time / tuned_mean_time}")
+    print(f'extracted {len(tasks)} tasks')
+    assert tasks
 
-    assert False, "Task extraction is stateful and whichever eval is run first sets the schedule to be used on subsequent evals"
+    tune_model(tasks)
+
+    #input('finished tuning...')
+
+    #print('[[Evaluation]]')
+    ## Load best schedules
+    #print("[Tuned]")
+    #with autotvm.apply_history_best(E2E_LOG_FILE_NAME):
+    #    with TARGET:
+    #        tuned_mean_time, tuned_std_dev = eval_model(mod, TARGET)
+    #        print("Mean inference time: %.2f ms (+/- %.2f ms)" % (tuned_mean_time, tuned_std_dev))
+
+    #print("[Untuned]")
+    #untuned_mean_time, untuned_std_dev = eval_model(mod, TARGET)
+    #print("Mean inference time: %.2f ms (+/- %.2f ms)" % (untuned_mean_time, untuned_std_dev))
+    #print("[MicroTVM Speedup]")
+    #print(f"{untuned_mean_time / tuned_mean_time}")
+
+    #assert False, "Task extraction is stateful and whichever eval is run first sets the schedule to be used on subsequent evals"
 
 
 if __name__ == '__main__':

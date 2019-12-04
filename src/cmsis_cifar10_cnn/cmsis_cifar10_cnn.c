@@ -29,15 +29,15 @@ void mean_subtract(q7_t* image_data) {
 }
 
 int32_t run_nn(q7_t* input_data, q7_t* output_data) {
-  void* col_buffer = TVMBackendAllocWorkspace(1, 0, 6400, 2, 8);
+  void* col_buffer = TVMBackendAllocWorkspace(1, 0, (uint64_t) 6400, 2, 8);
   if (col_buffer == NULL) {
     return -1;
   }
-  void* buffer1 = TVMBackendAllocWorkspace(1, 0, 8192, 2, 8);
+  void* buffer1 = TVMBackendAllocWorkspace(1, 0, (uint64_t) 8192, 2, 8);
   if (buffer1 == NULL) {
     return -1;
   }
-  void* buffer2 = TVMBackendAllocWorkspace(1, 0, 32768, 2, 8);
+  void* buffer2 = TVMBackendAllocWorkspace(1, 0, (uint64_t) 32768, 2, 8);
   if (buffer2 == NULL) {
     return -1;
   }
@@ -66,7 +66,7 @@ int32_t run_nn(q7_t* input_data, q7_t* output_data) {
   return 0;
 }
 
-int32_t arm_conv2d_wrapper(TVMValue* arg_values, int* arg_type_codes, int32_t num_args) {
+int32_t arm_cifar10_cnn_wrapper(TVMValue* arg_values, int* arg_type_codes, int32_t num_args) {
   void* data_handle = (((TVMValue*)arg_values)[0].v_handle);
   void* output_handle = (((TVMValue*)arg_values)[1].v_handle);
 

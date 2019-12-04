@@ -1,0 +1,5 @@
+[Sample 0]
+  Model execution took 9474.179668000002 milliseconds
+  Output: [[ -5 -20  16   2  20   2   3  -8  -3 -14]]
+  Prediction was Deer
+  Actual was Dog

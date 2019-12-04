@@ -29,6 +29,10 @@ batch_size = 64
 
 LAYOUT = 'NCHW'
 
+train_data = gluon.data.DataLoader(
+    gluon.data.vision.CIFAR10(train=True).transform_first(transforms.ToTensor()),
+    batch_size=64, shuffle=True)
+
 def build_cifar10_cnn(net):
     """Build a simple convolutional network that replicates ARM's CMSIS-NN example"""
     with net.name_scope():
