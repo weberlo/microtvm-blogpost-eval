@@ -16,7 +16,7 @@ from tvm.micro import create_micro_mod
 from tvm.relay.testing import resnet
 
 import micro_eval
-from micro_eval.util import gen_cifar10_cnn, relay_micro_build, eval_cpu_graph_runtime, eval_relay_intrp, reset_gdbinit
+from micro_eval.util import gen_cifar10_cnn, relay_micro_build, eval_cpu_graph_runtime, eval_relay_intrp, reset_gdbinit, get_comm_overhead
 
 ###################
 # MODEL/DATA UTIL #
@@ -48,7 +48,7 @@ if 'CMSIS_PATH' not in os.environ:
     raise RuntimeError('must have "CMSIS_PATH" in environment')
 CMSIS_PATH = os.environ['CMSIS_PATH']
 
-class DummyCMod:
+class CmsisCnnCMod:
     def __init__(self):
         pass
 
@@ -119,9 +119,9 @@ reset_gdbinit(TVM_DEV_CONFIG)
 # Main Course #
 ###############
 CIFAR10_CLASSES = ["Plane", "Car", "Bird", "Cat", "Deer", "Dog", "Frog", "Horse", "Ship", "Truck"]
-NUM_SAMPLES = 5
+NUM_SAMPLES = 10
 
-USE_TUNED_SCHEDULES = True
+USE_TUNED_SCHEDULES = False
 USE_RANDOM_PARAMS = False
 
 TVM_DATA_LAYOUT = 'NCHW'
@@ -131,9 +131,7 @@ CMSIS_OUTPUT_SHAPE = (10,)
 IN_DTYPE = 'uint8'
 OUT_DTYPE = 'int8'
 
-assert False, "execute an empty kernel to figure out what the comm overhead is and subtract that from the times"
-
-def eval_cmsis(samples):
+def eval_cmsis(samples, time_overhead, cycle_overhead):
     # Begin a session
     print("[Initting]")
     # TODO probably need a different dev conf for cmsis
@@ -141,7 +139,7 @@ def eval_cmsis(samples):
         # Build the function
         print("[Building]")
         micro_mod = create_micro_mod(
-            DummyCMod(),
+            CmsisCnnCMod(),
             CMSIS_DEV_CONFIG,
             lib_src_paths=CMSIS_SRC_PATHS,
             lib_include_paths=CMSIS_INCLUDE_PATHS)
@@ -166,8 +164,8 @@ def eval_cmsis(samples):
                 sess.get_last_batch_cycles()
                 micro_func(data_tvm, output_tvm)
                 ctx.sync()
-                exec_time = sess.get_last_batch_time()
-                exec_cycles = sess.get_last_batch_cycles()
+                exec_time = sess.get_last_batch_time() - time_overhead
+                exec_cycles = sess.get_last_batch_cycles() - cycle_overhead
                 f.write(f'  Model execution took {exec_time} milliseconds and {exec_cycles} cycles\n')
 
                 cmsis_output_np = output_tvm.asnumpy()
@@ -178,7 +176,7 @@ def eval_cmsis(samples):
                 f.write(f'  Actual was {label}\n')
 
 
-def eval_micro(samples):
+def eval_micro(samples, time_overhead, cycle_overhead):
     mod, params = gen_cifar10_cnn(USE_RANDOM_PARAMS)
     # Begin a session
     print("[Initting]")
@@ -217,8 +215,8 @@ def eval_micro(samples):
                 ctx.sync()
                 graph_mod.run(data=image_np)
                 ctx.sync()
-                exec_time = sess.get_last_batch_time()
-                exec_cycles = sess.get_last_batch_cycles()
+                exec_time = sess.get_last_batch_time() - time_overhead
+                exec_cycles = sess.get_last_batch_cycles() - cycle_overhead
                 f.write(f'  Model execution took {exec_time} milliseconds and {exec_cycles} cycles\n')
 
                 # Get output
@@ -232,9 +230,10 @@ def eval_micro(samples):
                 #break
 
 
-#samples = get_sample_points(NUM_SAMPLES)
-#eval_cmsis(samples)
-#eval_micro(samples)
+time_overhead, cycle_overhead = get_comm_overhead(TVM_DEV_CONFIG)
+samples = get_sample_points(NUM_SAMPLES)
+#eval_cmsis(samples, time_overhead, cycle_overhead)
+eval_micro(samples, time_overhead, cycle_overhead)
 
 #with relay.build_config(opt_level=3, disabled_pass={"AlterOpLayout"}):
 #    intrp_output_np = eval_relay_intrp(
@@ -259,6 +258,7 @@ else:
     with open('micro_untuned_results.txt', 'r') as f:
         print('[[Micro Untuned]]')
         print(f.read())
+
 
 def load_outputs(path):
     with open(path, 'rb') as f:
@@ -297,6 +297,7 @@ if micro_eval.util.DEBUG_MODE:
         print(f'=================[{key}]===================')
         print(micro_val)
         input('========================================')
+
 
 
 #if micro_eval.util.DEBUG_MODE:

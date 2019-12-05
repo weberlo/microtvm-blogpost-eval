@@ -1,25 +1,50 @@
 [Sample {i}]
-  Model execution took 162.010479 milliseconds and 6414456.0 cycles
-  Output: [ 19 -22  -8   8  13 -17 -14 -13  17  16]
-  Prediction was Plane
-  Actual was Frog
+  Model execution took 125.287071 milliseconds and 6417379.0 cycles
+  Output: [ 16  27 -25  20 -13 -47 -24 -48  89   4]
+  Prediction was Ship
+  Actual was Ship
 [Sample {i}]
-  Model execution took 163.079643 milliseconds and 6416830.0 cycles
-  Output: [ -9 -15  15 -22 -25   0  64 -37   7  22]
-  Prediction was Frog
-  Actual was Frog
+  Model execution took 153.635062 milliseconds and 6419885.0 cycles
+  Output: [ -6  17 -11   0 -22 -40  25 -17 -16  69]
+  Prediction was Truck
+  Actual was Truck
 [Sample {i}]
-  Model execution took 159.011178 milliseconds and 6414140.0 cycles
-  Output: [  9  -6   1   0  41  -7 -18  -1  -9  -9]
-  Prediction was Deer
-  Actual was Dog
-[Sample {i}]
-  Model execution took 150.672039 milliseconds and 6417157.0 cycles
-  Output: [ 35  -7 -63   8  32  38 -41  56 -47  -7]
+  Model execution took 135.727072 milliseconds and 6419146.0 cycles
+  Output: [ -8   8  -8   4 -24   5 -29  57 -16  12]
   Prediction was Horse
   Actual was Horse
 [Sample {i}]
-  Model execution took 156.308383 milliseconds and 6418613.0 cycles
-  Output: [-28  25   2  24 -12 -39  35 -41  31   5]
+  Model execution took 124.651971 milliseconds and 6417890.0 cycles
+  Output: [ -6 -19   0   8  12 -20  19  -4  -9  18]
   Prediction was Frog
-  Actual was Car
+  Actual was Deer
+[Sample {i}]
+  Model execution took 116.415201 milliseconds and 6415483.0 cycles
+  Output: [  6  44  10 -39   0 -21 -22   8  -9  25]
+  Prediction was Car
+  Actual was Frog
+[Sample {i}]
+  Model execution took 117.07331500000001 milliseconds and 6418217.0 cycles
+  Output: [  8 -27 -12  13  14 -43  44  35 -24  -8]
+  Prediction was Frog
+  Actual was Horse
+[Sample {i}]
+  Model execution took 116.84828300000001 milliseconds and 6417250.0 cycles
+  Output: [ 27 -18 -22   3   0 -24 -16  -9   0  58]
+  Prediction was Truck
+  Actual was Deer
+[Sample {i}]
+  Model execution took 117.09413400000003 milliseconds and 6412911.0 cycles
+  Output: [ 19 -39  -7  19  27 -22 -21  37 -31  20]
+  Prediction was Horse
+  Actual was Horse
+[Sample {i}]
+  Model execution took 124.021038 milliseconds and 6416108.0 cycles
+  Output: [-16  35 -32   6 -43   1  93 -54  19  -7]
+  Prediction was Frog
+  Actual was Plane
+[Sample {i}]
+  Model execution took 126.65647900000002 milliseconds and 6416900.0 cycles
+  Output: [ 22 -25  21  38 -23 -22  15  -1 -42  18]
+  Prediction was Cat
+  Actual was Plane

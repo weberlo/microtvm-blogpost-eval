@@ -1,4 +1,5 @@
 import json
+import os
 
 import numpy as np
 
@@ -432,3 +433,28 @@ end
 print_utvm_args
 """)
         f.write(gdbinit_contents)
+
+
+class EmptyCMod:
+    def __init__(self):
+        pass
+
+    def export_library(self, out_obj_path, fcompile=None):
+        assert fcompile is not None
+        fcompile(out_obj_path, f'{os.path.dirname(__file__)}/../src/empty.c')
+
+
+def get_comm_overhead(dev_config):
+    with micro.Session(dev_config) as sess:
+        micro_mod = create_micro_mod(EmptyCMod(), dev_config)
+        micro_func = micro_mod['empty']
+        ctx = tvm.micro_dev(0)
+        ctx.sync()
+        sess.get_last_batch_time()
+        sess.get_last_batch_cycles()
+        micro_func()
+        ctx.sync()
+        exec_time = sess.get_last_batch_time()
+        exec_cycles = sess.get_last_batch_cycles()
+        return exec_time, exec_cycles
+
