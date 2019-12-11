@@ -101,11 +101,11 @@ OUTPUT_SHAPE = (N, CO, H, W)
 #B_TENSOR = ('TENSOR', B_SHAPE, IN_DTYPE)
 
 #N, M, L = 1024, 512, 64
-N, M, L = 32, 32, 32
+M, K, N = 2, 4, 2
 IN_DTYPE = 'int8'
 OUT_DTYPE = 'int32'
-A_SHAPE = (N, L)
-B_SHAPE = (M, L)
+A_SHAPE = (M, K)
+B_SHAPE = (N, K)
 A_TENSOR = ('TENSOR', A_SHAPE, IN_DTYPE)
 B_TENSOR = ('TENSOR', B_SHAPE, IN_DTYPE)
 
@@ -177,82 +177,113 @@ USE_TUNED_SCHEDULES = False
 #    return sched, [A, B, C]
 
 
-# NOTE this is transposed (i.e., A * B^T)
+# NOTE this is transposed matmul
+# NOTE only works for column sizes that are multiples of 4
 def matmul_arm_micro_template(A, B, out_dtype):
     A_typ, A_shape, A_dtype = A
     B_typ, B_shape, B_dtype = B
     assert A_typ == 'TENSOR'
     assert B_typ == 'TENSOR'
     assert A_shape[1] == B_shape[1]
-    N, M, L = A_shape[0], B_shape[0], A_shape[1]
+    M, K, N = A_shape[0], A_shape[1], B_shape[0] 
 
     # Algorithm
     k = tvm.reduce_axis((0, A_shape[1]), 'k')
     A = tvm.placeholder(A_shape, name='A', dtype=A_dtype)
     B = tvm.placeholder(B_shape, name='B', dtype=B_dtype)
     C = tvm.compute(
-               (N, M),
-               lambda i, j: tvm.sum(A[i, k] * B[j, k], axis=k),
+               (M, N),
+               lambda i, j: tvm.sum(A[i, k].astype(out_dtype) * B[j, k].astype(out_dtype), axis=k),
                name='C')
 
     # Default schedule
     sched = tvm.create_schedule(C.op)
 
-    factor = 16
     x, y = C.op.axis
     z, = C.op.reduce_axis
-    yo, yi = sched[C].split(y, factor=factor)
-    sched[C].reorder(x, yo, yi, z)
 
-    gemv = intrin_gemv(factor, A_shape[1], A.dtype, out_dtype)
-    sched[C].tensorize(yi, gemv)
-    sched[C].pragma(x, "import_c", gemv_impl())
+    # NOTE we need to create an outer dummy axis to attach the "import_c"
+    # pragma, because we can't attach pragmas to any tensorized axes
+    dummy_axis, x = sched[C].split(x, factor=(x.dom.extent - x.dom.min))
+    gemm = intrin_gemm(M, K, N, A.dtype, C.dtype)
+    sched[C].tensorize(x, gemm)
+    sched[C].pragma(dummy_axis, "import_c", gemm_impl())
+
+    input(tvm.lower(sched, [A, B, C], simple_mode=True))
 
     return sched, [A, B, C]
 
 
-def intrin_gemv(m, l, in_dtype, out_dtype):
-    a = tvm.placeholder((l,), name='a', dtype=in_dtype)
-    b = tvm.placeholder((m, l), name='b', dtype=in_dtype)
-    k = tvm.reduce_axis((0, l), name='k')
-    c = tvm.compute((m,), lambda i: tvm.sum(a[k] * b[i, k], axis=k), name='c')
-    Ab = tvm.decl_buffer(a.shape, a.dtype,
-                         name="A",
-                         offset_factor=1,
-                         strides=[1])
-    Bb = tvm.decl_buffer(b.shape, b.dtype,
-                         name="B",
-                         offset_factor=1,
-                         strides=[tvm.var("s1"), 1])
-    Cb = tvm.decl_buffer(c.shape, c.dtype,
-                         name="C",
-                         offset_factor=1,
-                         strides=[1])
+def intrin_gemm(M, K, N, in_dtype, out_dtype):
+    A = tvm.placeholder((M, K), name='a', dtype=in_dtype)
+    B = tvm.placeholder((N, K), name='b', dtype=in_dtype)
+    k = tvm.reduce_axis((0, K), name='k')
+    C = tvm.compute((M, N), lambda i, j: tvm.sum(A[i, k].astype(out_dtype) * B[j, k].astype(out_dtype), axis=k), name='c')
+    A_buf = tvm.decl_buffer(
+            A.shape, A.dtype,
+            name="A",
+            offset_factor=1)
+    B_buf = tvm.decl_buffer(
+            B.shape, B.dtype,
+            name="B",
+            offset_factor=1)
+    C_buf = tvm.decl_buffer(
+            C.shape, C.dtype,
+            name="C",
+            offset_factor=1)
     def intrin_func(ins, outs):
         ib = tvm.ir_builder.create()
         aa, bb = ins
         cc = outs[0]
-        ib.emit(tvm.call_extern("int32", "gemv_update",
+        ib.emit(tvm.call_extern("int32", "gemm_update",
                                 cc.access_ptr("w"),
                                 aa.access_ptr("r"),
                                 bb.access_ptr("r"),
-                                m, l, bb.strides[0]))
+                                M, K, N))
         return ib.get()
     with tvm.build_config(offset_factor=1):
-        return tvm.decl_tensor_intrin(c.op, intrin_func, binds={a: Ab, b: Bb, c: Cb})
+        return tvm.decl_tensor_intrin(C.op, intrin_func, binds={A: A_buf, B: B_buf, C: C_buf})
 
 
-def gemv_impl():
+def gemm_impl():
+    # code reference: CMSIS-NN paper (https://arxiv.org/abs/1801.06601)
     cc_code = """
 #ifdef __cplusplus
 extern "C"
 #endif
-int32_t gemv_update(int8_t *cc, int8_t *aa, int8_t *bb, int m, int l, int stride) {
-  for (int i = 0; i < m; ++i) {
-    for (int j = 0; j < l; ++j) {
-      cc[i] += aa[j] * bb[i * stride + j];
-    }
-  }
+__STATIC_FORCEINLINE int32_t gemm_update(int32_t *cc, int8_t *aa, int8_t *bb, int M, int K, int N) {
+  q7_t *pA = aa;
+  q7_t *pA2 = aa + K;
+  q7_t *pB = bb;
+  q7_t *pB2 = bb + K;
+
+  q31_t sum11 = 0;
+  q31_t sum12 = 0;
+  q31_t sum21 = 0;
+  q31_t sum22 = 0;
+
+  q31_t inA11, inA12, inA21, inA22;
+  q31_t inB11, inB12, inB21, inB22;
+  pA = read_and_pad(pA, &inA11, &inA12);
+  pA2 = read_and_pad(pA2, &inA21, &inA22);
+  pB = read_and_pad(pB, &inB11, &inB12);
+  pB2 = read_and_pad(pB2, &inB21, &inB22);
+  
+  sum11 = __SMLAD(inA11, inB11, sum11);
+  sum11 = __SMLAD(inA12, inB12, sum11);
+  
+  sum12 = __SMLAD(inA11, inB21, sum12);
+  sum12 = __SMLAD(inA12, inB22, sum12);
+  
+  sum21 = __SMLAD(inA21, inB11, sum21);
+  sum21 = __SMLAD(inA22, inB12, sum21);
+  
+  sum22 = __SMLAD(inA21, inB21, sum22);
+  sum22 = __SMLAD(inA22, inB22, sum22);
+  cc[0] = sum11;
+  cc[1] = sum12;
+  cc[2] = sum21;
+  cc[3] = sum22;
   return 0;
 }
     """
@@ -296,33 +327,35 @@ def run_micro_matmul(sess, time_overhead, cycle_overhead):
     sched, [A, B, C] = matmul_arm_micro_template(A_TENSOR, B_TENSOR, OUT_DTYPE)
     #func = tvm.build(sched, arg_bufs, target="llvm", name="gemv")
     with TARGET:
-        c_mod = tvm.build(sched, [A, B, C], name="gemv")
+        c_mod = tvm.build(sched, [A, B, C], name="gemm")
     input(c_mod.get_source())
 
     from topi.util import get_const_tuple
-    dtype = A.dtype
-    A_np = np.random.randint(-30, 30, size=get_const_tuple(A.shape)).astype(dtype)
-    B_np = np.random.randint(-30, 30, size=get_const_tuple(B.shape)).astype(dtype)
+    A_np = np.random.randint(-30, 30, size=get_const_tuple(A.shape)).astype(A.dtype)
+    B_np = np.random.randint(-30, 30, size=get_const_tuple(B.shape)).astype(B.dtype)
 
     micro_mod = create_micro_mod(c_mod, DEV_CONFIG, lib_include_paths=CMSIS_INCLUDE_PATHS)
-    micro_func = micro_mod['gemv']
+    micro_func = micro_mod['gemm']
     ctx = tvm.micro_dev(0)
 
     A_tvm = tvm.nd.array(A_np, ctx=ctx)
     B_tvm = tvm.nd.array(B_np, ctx=ctx)
-    C_tvm = tvm.nd.array(np.zeros(get_const_tuple(C.shape), dtype=dtype), ctx)
+    C_tvm = tvm.nd.array(np.zeros(get_const_tuple(C.shape), dtype=C.dtype), ctx)
 
+    print(A_np)
+    print(B_np)
     batch_time, batch_cycles = benchmark_micro_func(sess, micro_func, [A_tvm, B_tvm, C_tvm], 1)
     batch_time -= time_overhead
     batch_cycles -= cycle_overhead
 
-    tvm.testing.assert_allclose(C_tvm.asnumpy(), np.dot(A_np, B_np.T), rtol=1e-3)
+    tvm.testing.assert_allclose(C_tvm.asnumpy(), np.dot(A_np.astype(C.dtype), B_np.T.astype(C.dtype)), rtol=1e-3)
 
 
 def main():
     reset_gdbinit(DEV_CONFIG)
 
-    time_overhead, cycle_overhead = get_comm_overhead(DEV_CONFIG)
+    #time_overhead, cycle_overhead = get_comm_overhead(DEV_CONFIG)
+    time_overhead, cycle_overhead = 0.0, 0
 
     with micro.Session(DEV_CONFIG) as sess:
         #run_micro_conv2d(sess, time_overhead, cycle_overhead)
