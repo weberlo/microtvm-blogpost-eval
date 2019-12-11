@@ -117,12 +117,10 @@ TARGET = tvm.target.create('c -device=micro_dev')
 
 #N_TRIAL = 1500
 #EARLY_STOPPING = 800
-N_TRIAL = 600
-EARLY_STOPPING = 400
+N_TRIAL = 1
+EARLY_STOPPING = 1
 # we only need one per trial because the timings are cycle-accurate
 N_PER_TRIAL = 15
-# change this to the number of boards you have attached
-#N_PARALLEL = 9
 E2E_LOG_FILE_NAME = f'{DEVICE_ID}.e2e.log'
 
 TRACKER_ADDR = '0.0.0.0'
@@ -208,7 +206,10 @@ def get_num_devices(dev_id):
 
 
 def tune_model(tasks):
-    n_parallel = get_num_devices(DEVICE_ID)
+    print('FORCING N_PARALLEL TO 1')
+    #n_parallel = get_num_devices(DEVICE_ID)
+    n_parallel = 1
+
     print('[Tuning]')
     for i in range(len(tasks)):
         if 'conv2d' in tasks[i].name:

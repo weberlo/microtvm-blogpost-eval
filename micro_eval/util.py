@@ -110,7 +110,6 @@ def schedule_conv2d_arm_micro_nchw(cfg, outs):
                                             cfg['tile_co'].size[-1]],
                                  max_unroll=8,
                                  cfg=cfg)
-        #s[conv].compute_at(s[last], ow)
 
         kernel_scope = n  # this is the scope to attach global config inside this kernel
 
@@ -315,7 +314,7 @@ def relay_micro_build(func, dev_config, target, params=None):
     with relay.build_config(opt_level=3, disabled_pass={"AlterOpLayout"}):
         with tvm.build_config(disable_vectorize=True):
             graph, c_mod, params = relay.build(func, target=target, params=params)
-    print(c_mod.get_source())
+    input(c_mod.get_source())
     micro_mod = micro.create_micro_mod(c_mod, dev_config)
     ctx = tvm.micro_dev(0)
     if DEBUG_MODE:
@@ -458,3 +457,14 @@ def get_comm_overhead(dev_config):
         exec_cycles = sess.get_last_batch_cycles()
         return exec_time, exec_cycles
 
+
+def benchmark_micro_func(sess, micro_func, args, num_trials):
+    ctx = tvm.micro_dev(0)
+    # sync before and after to ensure these are the only tasks in the queue
+    ctx.sync()
+    sess.get_last_batch_time()
+    sess.get_last_batch_cycles()
+    for _ in range(num_trials):
+        micro_func(*args)
+    ctx.sync()
+    return sess.get_last_batch_time(), sess.get_last_batch_cycles()

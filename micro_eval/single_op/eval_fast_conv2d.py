@@ -28,7 +28,7 @@ from tvm.relay.testing import resnet
 from tvm.relay import transform
 from tvm.relay import create_executor
 
-from micro_eval.util import relay_micro_build, reset_gdbinit, get_comm_overhead
+from micro_eval.util import relay_micro_build, reset_gdbinit, get_comm_overhead, benchmark_micro_func
 
 if 'CMSIS_PATH' not in os.environ:
     raise RuntimeError('must have "CMSIS_PATH" in environment')
@@ -91,19 +91,7 @@ TVM_LAYOUT = 'NCHW'
 
 NUM_TRIALS = 15
 
-USE_TUNED_SCHEDULES = False
-
-def benchmark_micro_func(sess, micro_func, args, num_trials=NUM_TRIALS):
-    ctx = tvm.micro_dev(0)
-    # sync before and after to ensure these are the only tasks in the queue
-    ctx.sync()
-    sess.get_last_batch_time()
-    sess.get_last_batch_cycles()
-    for _ in range(NUM_TRIALS):
-        micro_func(*args)
-    ctx.sync()
-    return sess.get_last_batch_time(), sess.get_last_batch_cycles()
-
+USE_TUNED_SCHEDULES = True
 
 def run_cmsis_conv2d(sess, time_overhead, cycle_overhead, data_np, kernel_np, bias_np):
     micro_mod = create_micro_mod(
@@ -119,7 +107,7 @@ def run_cmsis_conv2d(sess, time_overhead, cycle_overhead, data_np, kernel_np, bi
     bias_tvm = tvm.nd.array(bias_np, ctx=ctx)
     output_tvm = tvm.nd.array(np.zeros(CMSIS_OUTPUT_SHAPE, dtype=DTYPE), ctx=ctx)
 
-    batch_time, batch_cycles = benchmark_micro_func(sess, micro_func, [data_tvm, kernel_tvm, bias_tvm, output_tvm])
+    batch_time, batch_cycles = benchmark_micro_func(sess, micro_func, [data_tvm, kernel_tvm, bias_tvm, output_tvm], NUM_TRIALS)
     batch_time -= time_overhead
     batch_cycles -= cycle_overhead
 
@@ -128,14 +116,6 @@ def run_cmsis_conv2d(sess, time_overhead, cycle_overhead, data_np, kernel_np, bi
 
 def run_micro_conv2d(sess, time_overhead, cycle_overhead, data_np, kernel_np, bias_np):
     mod = build_conv2d_relay()
-    #with tvm.build_config(disable_vectorize=True):
-    #    #graph, c_mod, params = relay.build(mod, target="c")
-    #    graph, c_mod, params = relay.build(mod, target=TARGET)
-
-    #with relay.build_config(opt_level=3, disabled_pass={"AlterOpLayout"}):
-    #    with tvm.build_config(disable_vectorize=True):
-    #        graph, c_mod, params = relay.build(mod['main'], target=TARGET, params={})
-    #        input(c_mod.get_source())
 
     params = {
         'conv0_weight': tvm.nd.array(kernel_np, ctx=tvm.cpu(0)),
@@ -163,18 +143,6 @@ def run_micro_conv2d(sess, time_overhead, cycle_overhead, data_np, kernel_np, bi
     batch_time -= time_overhead
     batch_cycles -= cycle_overhead
 
-    #micro_mod = create_micro_mod(c_mod, DEV_CONFIG)
-    ##micro_func = micro_mod['fused_nn_conv2d_add_right_shift_cast']
-    #micro_func = micro_mod['fused_nn_conv2d_add_right_shift_cast']
-    #ctx = tvm.micro_dev(0)
-
-    #data_tvm = tvm.nd.array(data_np, ctx=ctx)
-    #kernel_tvm = tvm.nd.array(kernel_np, ctx=ctx)
-    #bias_tvm = tvm.nd.array(bias_np, ctx=ctx)
-    #output_tvm = tvm.nd.array(np.zeros(TVM_OUTPUT_SHAPE, dtype=DTYPE), ctx=ctx)
-
-    #batch_time = benchmark_micro_func(sess, micro_func, [data_tvm, kernel_tvm, bias_tvm, output_tvm])
-
     return graph_mod.get_output(0).asnumpy(), batch_time, batch_cycles
 
 
@@ -186,24 +154,6 @@ def run_intrp_conv2d(data_np, kernel_np, bias_np):
 
 
 def build_conv2d_relay():
-    # Construct Relay program (used for micro and interpreter eval).
-    #data_var = relay.var("data", shape=TVM_DATA_SHAPE, dtype=DTYPE)
-    #kernel_var = relay.var("kernel", shape=TVM_KERNEL_SHAPE, dtype=DTYPE)
-    #bias_var = relay.var("bias", shape=TVM_BIAS_SHAPE, dtype=DTYPE)
-    #conv_expr = relay.nn.conv2d(
-    #        data_var, kernel_var,
-    #        kernel_size=KERNEL_SIZE,
-    #        strides=STRIDES,
-    #        padding=PADDING,
-    #        dilation=DILATION,
-    #        channels=CO,
-    #        data_layout=TVM_LAYOUT,
-    #        out_layout=TVM_LAYOUT)
-    #bias_add_expr = relay.nn.bias_add(conv_expr, bias_var, axis=1)
-    #func = relay.Function(relay.analysis.free_vars(bias_add_expr), bias_add_expr)
-    #mod = relay.Module.from_expr(func)
-    #mod = transform.InferType()(mod)
-
     mod = relay.fromtext(f"""
     v0.0.4
     def @main(%data: Tensor[(1, {CI}, {H}, {W}), int8],
