@@ -101,7 +101,8 @@ OUTPUT_SHAPE = (N, CO, H, W)
 #B_TENSOR = ('TENSOR', B_SHAPE, IN_DTYPE)
 
 #N, M, L = 1024, 512, 64
-M, K, N = 2, 4, 2
+#M, K, N = 2, 4, 2
+M, K, N = 16, 32, 16
 IN_DTYPE = 'int8'
 OUT_DTYPE = 'int32'
 A_SHAPE = (M, K)
@@ -202,60 +203,82 @@ def matmul_arm_micro_template(A, B, out_dtype):
     x, y = C.op.axis
     z, = C.op.reduce_axis
 
-    # NOTE we need to create an outer dummy axis to attach the "import_c"
-    # pragma, because we can't attach pragmas to any tensorized axes
-    dummy_axis, x = sched[C].split(x, factor=(x.dom.extent - x.dom.min))
-    gemm = intrin_gemm(M, K, N, A.dtype, C.dtype)
-    sched[C].tensorize(x, gemm)
-    sched[C].pragma(dummy_axis, "import_c", gemm_impl())
+    xo, xi = sched[C].split(x, factor=2)
+    yo, yi = sched[C].split(y, factor=2)
+    zo, zi = sched[C].split(z, factor=4)
+    sched[C].reorder(xo, yo, zo, xi, yi, zi)
+
+    # # NOTE we need to create an outer dummy axis to attach the "import_c"
+    # # pragma, because we can't attach pragmas to any tensorized axes
+    # dummy_axis, x = sched[C].split(x, factor=(x.dom.extent - x.dom.min))
+    gemm = intrin_gemm_2x4x2(K, N, A.dtype, C.dtype)
+    sched[C].tensorize(xi, gemm)
+    sched[C].pragma(xo, "import_c", gemm_2x4x2_impl())
 
     input(tvm.lower(sched, [A, B, C], simple_mode=True))
 
     return sched, [A, B, C]
 
 
-def intrin_gemm(M, K, N, in_dtype, out_dtype):
-    A = tvm.placeholder((M, K), name='a', dtype=in_dtype)
-    B = tvm.placeholder((N, K), name='b', dtype=in_dtype)
-    k = tvm.reduce_axis((0, K), name='k')
-    C = tvm.compute((M, N), lambda i, j: tvm.sum(A[i, k].astype(out_dtype) * B[j, k].astype(out_dtype), axis=k), name='c')
+def intrin_gemm_2x4x2(K, N, in_dtype, out_dtype):
+    A = tvm.placeholder((2, 4), name='a', dtype=in_dtype)
+    B = tvm.placeholder((2, 4), name='b', dtype=in_dtype)
+    k = tvm.reduce_axis((0, 4), name='k')
+    C = tvm.compute((2, 2), lambda i, j: tvm.sum(A[i, k].astype(out_dtype) * B[j, k].astype(out_dtype), axis=k), name='c')
     A_buf = tvm.decl_buffer(
             A.shape, A.dtype,
             name="A",
-            offset_factor=1)
+            offset_factor=1,
+            strides=[tvm.var("A_s"), 1])
     B_buf = tvm.decl_buffer(
             B.shape, B.dtype,
             name="B",
-            offset_factor=1)
+            offset_factor=1,
+            strides=[tvm.var("B_s"), 1])
     C_buf = tvm.decl_buffer(
             C.shape, C.dtype,
             name="C",
-            offset_factor=1)
+            offset_factor=1,
+            strides=[tvm.var("C_s"), 1])
     def intrin_func(ins, outs):
-        ib = tvm.ir_builder.create()
         aa, bb = ins
         cc = outs[0]
-        ib.emit(tvm.call_extern("int32", "gemm_update",
-                                cc.access_ptr("w"),
-                                aa.access_ptr("r"),
-                                bb.access_ptr("r"),
-                                M, K, N))
-        return ib.get()
+        def _body():
+            ib = tvm.ir_builder.create()
+            ib.emit(tvm.call_extern("int32", "gemm_2x4x2_update",
+                                    aa.access_ptr("r"),
+                                    bb.access_ptr("r"),
+                                    cc.access_ptr("w"),
+                                    aa.strides[0],
+                                    bb.strides[0],
+                                    cc.strides[0]))
+            return ib.get()
+        def _reduce_reset():
+            ib = tvm.ir_builder.create()
+            ib.emit(tvm.call_extern("int32", "gemm_2x4x2_reset",
+                                    cc.access_ptr("w"),
+                                    cc.strides[0]))
+            return ib.get()
+        def _reduce_update():
+            return _body()
+        return _body(), _reduce_reset(), _reduce_update()
     with tvm.build_config(offset_factor=1):
         return tvm.decl_tensor_intrin(C.op, intrin_func, binds={A: A_buf, B: B_buf, C: C_buf})
 
 
-def gemm_impl():
+def gemm_2x4x2_impl():
     # code reference: CMSIS-NN paper (https://arxiv.org/abs/1801.06601)
     cc_code = """
 #ifdef __cplusplus
 extern "C"
 #endif
-__STATIC_FORCEINLINE int32_t gemm_update(int32_t *cc, int8_t *aa, int8_t *bb, int M, int K, int N) {
+__STATIC_FORCEINLINE int32_t gemm_2x4x2_update(
+    int8_t *aa, int8_t *bb, int32_t *cc,
+    int A_stride, int B_stride, int C_stride) {
   q7_t *pA = aa;
-  q7_t *pA2 = aa + K;
+  q7_t *pA2 = aa + A_stride;
   q7_t *pB = bb;
-  q7_t *pB2 = bb + K;
+  q7_t *pB2 = bb + B_stride;
 
   q31_t sum11 = 0;
   q31_t sum12 = 0;
@@ -280,10 +303,22 @@ __STATIC_FORCEINLINE int32_t gemm_update(int32_t *cc, int8_t *aa, int8_t *bb, in
   
   sum22 = __SMLAD(inA21, inB21, sum22);
   sum22 = __SMLAD(inA22, inB22, sum22);
-  cc[0] = sum11;
-  cc[1] = sum12;
-  cc[2] = sum21;
-  cc[3] = sum22;
+
+  cc[0] += sum11;
+  cc[1] += sum12;
+  cc[C_stride] += sum21;
+  cc[C_stride+1] += sum22;
+  return 0;
+}
+
+#ifdef __cplusplus
+extern "C"
+#endif
+__STATIC_FORCEINLINE int32_t gemm_2x4x2_reset(int32_t *cc, int C_stride) {
+  cc[0] = 0;
+  cc[1] = 0;
+  cc[C_stride] = 0;
+  cc[C_stride+1] = 0;
   return 0;
 }
     """
@@ -342,13 +377,13 @@ def run_micro_matmul(sess, time_overhead, cycle_overhead):
     B_tvm = tvm.nd.array(B_np, ctx=ctx)
     C_tvm = tvm.nd.array(np.zeros(get_const_tuple(C.shape), dtype=C.dtype), ctx)
 
-    print(A_np)
-    print(B_np)
     batch_time, batch_cycles = benchmark_micro_func(sess, micro_func, [A_tvm, B_tvm, C_tvm], 1)
     batch_time -= time_overhead
     batch_cycles -= cycle_overhead
 
-    tvm.testing.assert_allclose(C_tvm.asnumpy(), np.dot(A_np.astype(C.dtype), B_np.T.astype(C.dtype)), rtol=1e-3)
+    C_np = C_tvm.asnumpy()
+    assert np.sum(C_np) != 0
+    tvm.testing.assert_allclose(C_np, np.dot(A_np.astype(C.dtype), B_np.T.astype(C.dtype)), rtol=1e-3)
 
 
 def main():
