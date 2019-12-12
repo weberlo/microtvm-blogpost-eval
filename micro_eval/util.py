@@ -468,3 +468,198 @@ def benchmark_micro_func(sess, micro_func, args, num_trials):
         micro_func(*args)
     ctx.sync()
     return sess.get_last_batch_time(), sess.get_last_batch_cycles()
+
+
+##########################
+# 1x4x1 MatMul Intrinsic #
+##########################
+
+# NOTE this is transposed matmul (A * B^T)
+def intrin_gemm_1x4x1(K, N, in_dtype, out_dtype):
+    A = tvm.placeholder((1, 4), name='a', dtype=in_dtype)
+    B = tvm.placeholder((1, 4), name='b', dtype=in_dtype)
+    k = tvm.reduce_axis((0, 4), name='k')
+    C = tvm.compute((1, 1), lambda i, j: tvm.sum(A[i, k].astype(out_dtype) * B[j, k].astype(out_dtype), axis=k), name='c')
+    A_buf = tvm.decl_buffer(
+            A.shape, A.dtype,
+            name="A",
+            offset_factor=1,
+            strides=[tvm.var("A_s"), 1])
+    B_buf = tvm.decl_buffer(
+            B.shape, B.dtype,
+            name="B",
+            offset_factor=1,
+            strides=[tvm.var("B_s"), 1])
+    C_buf = tvm.decl_buffer(
+            C.shape, C.dtype,
+            name="C",
+            offset_factor=1,
+            strides=[tvm.var("C_s"), 1])
+    def intrin_func(ins, outs):
+        aa, bb = ins
+        cc = outs[0]
+        def _body():
+            ib = tvm.ir_builder.create()
+            ib.emit(tvm.call_extern("int32", "gemm_1x4x1_update",
+                                    aa.access_ptr("r"),
+                                    bb.access_ptr("r"),
+                                    cc.access_ptr("w"),
+                                    aa.strides[0],
+                                    bb.strides[0],
+                                    cc.strides[0]))
+            return ib.get()
+        def _reduce_reset():
+            ib = tvm.ir_builder.create()
+            ib.emit(tvm.call_extern("int32", "gemm_1x4x1_reset",
+                                    cc.access_ptr("w"),
+                                    cc.strides[0]))
+            return ib.get()
+        def _reduce_update():
+            return _body()
+        return _body(), _reduce_reset(), _reduce_update()
+    with tvm.build_config(offset_factor=1):
+        return tvm.decl_tensor_intrin(C.op, intrin_func, binds={A: A_buf, B: B_buf, C: C_buf})
+
+
+def gemm_1x4x1_impl():
+    # code reference: CMSIS-NN paper (https://arxiv.org/abs/1801.06601)
+    cc_code = """
+#ifdef __cplusplus
+extern "C"
+#endif
+__STATIC_FORCEINLINE int32_t gemm_1x4x1_update(
+    int8_t *aa, int8_t *bb, int32_t *cc,
+    int A_stride, int B_stride, int C_stride) {
+  q31_t sum = 0;
+
+  q31_t inA11, inA12;
+  q31_t inB11, inB12;
+  read_and_pad(aa, &inA11, &inA12);
+  read_and_pad(bb, &inB11, &inB12);
+
+  sum = __SMLAD(inA11, inB11, sum);
+  sum = __SMLAD(inA12, inB12, sum);
+
+  cc[0] += sum;
+  return 0;
+}
+
+#ifdef __cplusplus
+extern "C"
+#endif
+__STATIC_FORCEINLINE int32_t gemm_1x4x1_reset(int32_t *cc, int C_stride) {
+  cc[0] = 0;
+  return 0;
+}
+    """
+    return cc_code
+
+
+##########################
+# 2x4x2 MatMul Intrinsic #
+##########################
+
+# NOTE this is transposed matmul (A * B^T)
+def intrin_gemm_2x4x2(K, N, in_dtype, out_dtype):
+    A = tvm.placeholder((2, 4), name='a', dtype=in_dtype)
+    B = tvm.placeholder((2, 4), name='b', dtype=in_dtype)
+    k = tvm.reduce_axis((0, 4), name='k')
+    C = tvm.compute((2, 2), lambda i, j: tvm.sum(A[i, k].astype(out_dtype) * B[j, k].astype(out_dtype), axis=k), name='c')
+    A_buf = tvm.decl_buffer(
+            A.shape, A.dtype,
+            name="A",
+            offset_factor=1,
+            strides=[tvm.var("A_s"), 1])
+    B_buf = tvm.decl_buffer(
+            B.shape, B.dtype,
+            name="B",
+            offset_factor=1,
+            strides=[tvm.var("B_s"), 1])
+    C_buf = tvm.decl_buffer(
+            C.shape, C.dtype,
+            name="C",
+            offset_factor=1,
+            strides=[tvm.var("C_s"), 1])
+    def intrin_func(ins, outs):
+        aa, bb = ins
+        cc = outs[0]
+        def _body():
+            ib = tvm.ir_builder.create()
+            ib.emit(tvm.call_extern("int32", "gemm_2x4x2_update",
+                                    aa.access_ptr("r"),
+                                    bb.access_ptr("r"),
+                                    cc.access_ptr("w"),
+                                    aa.strides[0],
+                                    bb.strides[0],
+                                    cc.strides[0]))
+            return ib.get()
+        def _reduce_reset():
+            ib = tvm.ir_builder.create()
+            ib.emit(tvm.call_extern("int32", "gemm_2x4x2_reset",
+                                    cc.access_ptr("w"),
+                                    cc.strides[0]))
+            return ib.get()
+        def _reduce_update():
+            return _body()
+        return _body(), _reduce_reset(), _reduce_update()
+    with tvm.build_config(offset_factor=1):
+        return tvm.decl_tensor_intrin(C.op, intrin_func, binds={A: A_buf, B: B_buf, C: C_buf})
+
+
+def gemm_2x4x2_impl():
+    # code reference: CMSIS-NN paper (https://arxiv.org/abs/1801.06601)
+    cc_code = """
+#ifdef __cplusplus
+extern "C"
+#endif
+__STATIC_FORCEINLINE int32_t gemm_2x4x2_update(
+    int8_t *aa, int8_t *bb, int32_t *cc,
+    int A_stride, int B_stride, int C_stride) {
+  q7_t *pA = aa;
+  q7_t *pA2 = aa + A_stride;
+  q7_t *pB = bb;
+  q7_t *pB2 = bb + B_stride;
+
+  q31_t sum11 = 0;
+  q31_t sum12 = 0;
+  q31_t sum21 = 0;
+  q31_t sum22 = 0;
+
+  q31_t inA11, inA12, inA21, inA22;
+  q31_t inB11, inB12, inB21, inB22;
+  pA = read_and_pad(pA, &inA11, &inA12);
+  pA2 = read_and_pad(pA2, &inA21, &inA22);
+  pB = read_and_pad(pB, &inB11, &inB12);
+  pB2 = read_and_pad(pB2, &inB21, &inB22);
+
+  sum11 = __SMLAD(inA11, inB11, sum11);
+  sum11 = __SMLAD(inA12, inB12, sum11);
+
+  sum12 = __SMLAD(inA11, inB21, sum12);
+  sum12 = __SMLAD(inA12, inB22, sum12);
+
+  sum21 = __SMLAD(inA21, inB11, sum21);
+  sum21 = __SMLAD(inA22, inB12, sum21);
+
+  sum22 = __SMLAD(inA21, inB21, sum22);
+  sum22 = __SMLAD(inA22, inB22, sum22);
+
+  cc[0] += sum11;
+  cc[1] += sum12;
+  cc[C_stride] += sum21;
+  cc[C_stride+1] += sum22;
+  return 0;
+}
+
+#ifdef __cplusplus
+extern "C"
+#endif
+__STATIC_FORCEINLINE int32_t gemm_2x4x2_reset(int32_t *cc, int C_stride) {
+  cc[0] = 0;
+  cc[1] = 0;
+  cc[C_stride] = 0;
+  cc[C_stride+1] = 0;
+  return 0;
+}
+    """
+    return cc_code
