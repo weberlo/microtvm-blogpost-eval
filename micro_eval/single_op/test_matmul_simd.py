@@ -128,7 +128,7 @@ def matmul_arm_micro_template(A, B, out_dtype, tens_config):
         zo, zi = sched[C].split(z, factor=4)
         sched[C].reorder(xo, yo, zo, xi, yi, zi)
 
-        gemm = intrin_gemm_1x4x1(K, N, A.dtype, C.dtype)
+        gemm = intrin_gemm_1x4x1(A.dtype, C.dtype)
         sched[C].tensorize(xi, gemm)
         sched[C].pragma(xo, "import_c", gemm_1x4x1_impl())
     elif tens_config == TensorizeConfig.LARGE:
@@ -140,41 +140,42 @@ def matmul_arm_micro_template(A, B, out_dtype, tens_config):
         zo, zi = sched[C].split(z, factor=4)
         sched[C].reorder(xo, yo, zo, xi, yi, zi)
 
-        gemm = intrin_gemm_2x4x2(K, N, A.dtype, C.dtype)
+        gemm = intrin_gemm_2x4x2(A.dtype, C.dtype)
         sched[C].tensorize(xi, gemm)
         sched[C].pragma(xo, "import_c", gemm_2x4x2_impl())
 
     return sched, [A, B, C]
 
 
+def eval_micro(sess, sched, arg_bufs):
+    [A, B, C] = arg_bufs
+    c_mod = tvm.build(sched, [A, B, C], target=TARGET, name="gemm")
+    input(c_mod.get_source())
+
+    from topi.util import get_const_tuple
+    A_np = np.random.randint(-30, 30, size=get_const_tuple(A.shape)).astype(A.dtype)
+    B_np = np.random.randint(-30, 30, size=get_const_tuple(B.shape)).astype(B.dtype)
+
+    micro_mod = create_micro_mod(c_mod, DEV_CONFIG, lib_include_paths=CMSIS_INCLUDE_PATHS)
+    micro_func = micro_mod['gemm']
+    ctx = tvm.micro_dev(0)
+
+    A_tvm = tvm.nd.array(A_np, ctx=ctx)
+    B_tvm = tvm.nd.array(B_np, ctx=ctx)
+    C_tvm = tvm.nd.array(np.zeros(get_const_tuple(C.shape), dtype=C.dtype), ctx)
+
+    batch_time, _ = benchmark_micro_func(sess, micro_func, [A_tvm, B_tvm, C_tvm], 10)
+
+    C_np = C_tvm.asnumpy()
+    assert np.sum(C_np) != 0
+    tvm.testing.assert_allclose(C_np, np.dot(A_np.astype(C.dtype), B_np.T.astype(C.dtype)), rtol=1e-3)
+    return batch_time
+
+
 def main():
     reset_gdbinit(DEV_CONFIG)
 
     time_overhead, cycle_overhead = get_comm_overhead(DEV_CONFIG)
-
-    def eval_micro(sess, sched, arg_bufs):
-        [A, B, C] = arg_bufs
-        c_mod = tvm.build(sched, [A, B, C], target=TARGET, name="gemm")
-        input(c_mod.get_source())
-
-        from topi.util import get_const_tuple
-        A_np = np.random.randint(-30, 30, size=get_const_tuple(A.shape)).astype(A.dtype)
-        B_np = np.random.randint(-30, 30, size=get_const_tuple(B.shape)).astype(B.dtype)
-
-        micro_mod = create_micro_mod(c_mod, DEV_CONFIG, lib_include_paths=CMSIS_INCLUDE_PATHS)
-        micro_func = micro_mod['gemm']
-        ctx = tvm.micro_dev(0)
-
-        A_tvm = tvm.nd.array(A_np, ctx=ctx)
-        B_tvm = tvm.nd.array(B_np, ctx=ctx)
-        C_tvm = tvm.nd.array(np.zeros(get_const_tuple(C.shape), dtype=C.dtype), ctx)
-
-        batch_time, _ = benchmark_micro_func(sess, micro_func, [A_tvm, B_tvm, C_tvm], 10)
-
-        C_np = C_tvm.asnumpy()
-        assert np.sum(C_np) != 0
-        tvm.testing.assert_allclose(C_np, np.dot(A_np.astype(C.dtype), B_np.T.astype(C.dtype)), rtol=1e-3)
-        return batch_time
 
     with micro.Session(DEV_CONFIG) as sess:
         default_sched, default_arg_bufs = matmul_arm_micro_template(A_TENSOR, B_TENSOR, OUT_DTYPE, TensorizeConfig.NONE)

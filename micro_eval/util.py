@@ -475,7 +475,7 @@ def benchmark_micro_func(sess, micro_func, args, num_trials):
 ##########################
 
 # NOTE this is transposed matmul (A * B^T)
-def intrin_gemm_1x4x1(K, N, in_dtype, out_dtype):
+def intrin_gemm_1x4x1(in_dtype, out_dtype):
     A = tvm.placeholder((1, 4), name='a', dtype=in_dtype)
     B = tvm.placeholder((1, 4), name='b', dtype=in_dtype)
     k = tvm.reduce_axis((0, 4), name='k')
@@ -560,7 +560,7 @@ __STATIC_FORCEINLINE int32_t gemm_1x4x1_reset(int32_t *cc, int C_stride) {
 ##########################
 
 # NOTE this is transposed matmul (A * B^T)
-def intrin_gemm_2x4x2(K, N, in_dtype, out_dtype):
+def intrin_gemm_2x4x2(in_dtype, out_dtype):
     A = tvm.placeholder((2, 4), name='a', dtype=in_dtype)
     B = tvm.placeholder((2, 4), name='b', dtype=in_dtype)
     k = tvm.reduce_axis((0, 4), name='k')
