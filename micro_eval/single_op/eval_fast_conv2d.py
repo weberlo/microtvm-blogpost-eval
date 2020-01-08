@@ -57,7 +57,7 @@ CMSIS_SRC_PATHS = [
 
 from tvm.micro.device.arm import stm32f746xx
 from tvm.micro.device.arm.stm32f746xx import MemConstraint
-DEV_CONFIG = stm32f746xx.default_config('127.0.0.1', 6667)
+DEV_CONFIG = stm32f746xx.default_config('127.0.0.1', 6666)
 DEV_CONFIG['mem_layout'] = stm32f746xx.gen_mem_layout(OrderedDict([
     ('text', (14000, MemConstraint.ABSOLUTE_BYTES)),
     ('rodata', (100, MemConstraint.ABSOLUTE_BYTES)),
@@ -83,11 +83,11 @@ CMSIS_BIAS_SHAPE = (CO,)
 CMSIS_OUTPUT_SHAPE = (N, H, W, CO)
 CMSIS_LAYOUT = 'NHWC'
 
-TVM_DATA_SHAPE = (N, CI, H, W)
-TVM_KERNEL_SHAPE = (CO, CI, KH, KW)
+TVM_DATA_SHAPE = (N, H, W, CI)
+TVM_KERNEL_SHAPE = (KH, KW, CO, CI)
 TVM_BIAS_SHAPE = (CO,)
-TVM_OUTPUT_SHAPE = (N, CO, H, W)
-TVM_LAYOUT = 'NCHW'
+TVM_OUTPUT_SHAPE = (N, H, W, CO)
+TVM_LAYOUT = 'NHWC'
 
 NUM_TRIALS = 15
 
@@ -126,9 +126,9 @@ def run_micro_conv2d(sess, time_overhead, cycle_overhead, data_np, kernel_np, bi
         E2E_LOG_FILE_NAME = f'{DEVICE_ID}.e2e.log'
         with autotvm.apply_history_best(E2E_LOG_FILE_NAME):
             with TARGET:
-                graph_mod = relay_micro_build(mod['main'], DEV_CONFIG, TARGET, params=params)
+                graph_mod = relay_micro_build(mod['main'], DEV_CONFIG, TARGET, params=params, lib_include_paths=CMSIS_INCLUDE_PATHS)
     else:
-        graph_mod = relay_micro_build(mod['main'], DEV_CONFIG, TARGET, params=params)
+        graph_mod = relay_micro_build(mod['main'], DEV_CONFIG, TARGET, params=params, lib_include_paths=CMSIS_INCLUDE_PATHS)
 
     ctx = tvm.micro_dev(0)
     ctx.sync()
@@ -156,13 +156,22 @@ def run_intrp_conv2d(data_np, kernel_np, bias_np):
 def build_conv2d_relay():
     mod = relay.fromtext(f"""
     v0.0.4
-    def @main(%data: Tensor[(1, {CI}, {H}, {W}), int8],
-        %conv0_weight: Tensor[({CO}, {CI}, {KH}, {KW}), int8],
+    def @main(%data: Tensor[(1, {H}, {W}, {CI}), int8],
+        %conv0_weight: Tensor[({KH}, {KW}, {CO}, {CI}), int8],
         %conv0_bias: Tensor[({CO}), int8]) {{
-      %0 = nn.conv2d(%data, %conv0_weight, padding=[2, 2], channels={CO}, kernel_size=[5, 5], out_dtype="int32");
-      %1 = nn.bias_add(%0, cast(%conv0_bias, "int32"));
-      %2 = right_shift(%1, 9);
-      cast(%2, "int8")
+      %0 = nn.conv2d(
+        %data,
+        %conv0_weight,
+        padding=[2, 2],
+        channels={CO},
+        kernel_size=[5, 5],
+        data_layout="NHWC",
+        kernel_layout="HWOI",
+        out_dtype="int32");
+      //%1 = nn.bias_add(%0, cast(%conv0_bias, "int32"), axis=3);
+      //%2 = right_shift(%1, 9);
+      //cast(%2, "int8")
+      %0
     }}
     """)
     return mod

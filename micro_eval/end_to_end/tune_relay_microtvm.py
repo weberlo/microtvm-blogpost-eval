@@ -53,7 +53,7 @@ from topi.nn.pad import pad
 from topi.nn.util import get_pad_tuple
 from topi.util import simplify, get_const_tuple, traverse_inline
 
-from micro_eval.util import gen_cifar10_cnn, relay_micro_build, custom_pick_best
+from micro_eval.util import gen_conv2d, gen_cifar10_cnn, relay_micro_build, custom_pick_best, reset_gdbinit
 
 ################
 # Instructions #
@@ -94,6 +94,19 @@ from micro_eval.util import gen_cifar10_cnn, relay_micro_build, custom_pick_best
 # command for each board, adjusting the port accordingly.
 #
 
+################
+# CMSIS CONFIG #
+################
+if 'CMSIS_PATH' not in os.environ:
+    raise RuntimeError('must have "CMSIS_PATH" in environment')
+CMSIS_PATH = os.environ['CMSIS_PATH']
+
+CMSIS_INCLUDE_PATHS = [
+    f'{CMSIS_PATH}/CMSIS/Core/Include',
+    f'{CMSIS_PATH}/CMSIS/DSP/Include',
+    f'{CMSIS_PATH}/CMSIS/NN/Include'
+]
+
 ####################
 # Autotuning Setup #
 ####################
@@ -108,7 +121,8 @@ DEV_CONFIG['mem_layout'] = micro.device.arm.stm32f746xx.gen_mem_layout(OrderedDi
     ('bss', (600, MemConstraint.ABSOLUTE_BYTES)),
     ('args', (4096, MemConstraint.ABSOLUTE_BYTES)),
     ('heap', (100.0, MemConstraint.WEIGHT)),
-    ('workspace', (132000, MemConstraint.ABSOLUTE_BYTES)),
+    #('workspace', (132000, MemConstraint.ABSOLUTE_BYTES)),
+    ('workspace', (13000, MemConstraint.ABSOLUTE_BYTES)),
     ('stack', (32, MemConstraint.ABSOLUTE_BYTES)),
 ]))
 
@@ -117,46 +131,27 @@ TARGET = tvm.target.create('c -device=micro_dev')
 
 #N_TRIAL = 1500
 #EARLY_STOPPING = 800
+
 N_TRIAL = 1
 EARLY_STOPPING = 1
-# we only need one per trial because the timings are cycle-accurate
+
 N_PER_TRIAL = 15
 E2E_LOG_FILE_NAME = f'{DEVICE_ID}.e2e.log'
 
 TRACKER_ADDR = '0.0.0.0'
 TRACKER_PORT = 9190
 
-#INPUT_SHAPE = (1, 3, 32, 32)
-
 TUNE_OPS = [relay.op.nn.conv2d]
 
-#N, H, W, CO, CI, KH, KW = 1, 32, 32, 3, 3, 5, 5
-#STRIDES, PADDING, DILATION = (1, 1), (1, 1), 1
-LAYOUT = 'NCHW'
-#IN_DTYPE = 'float32'
-#OUT_DTYPE = 'float32'
 IN_DTYPE = 'int8'
 OUT_DTYPE = 'int32'
 # disable timeouts because JTAG is slow
 TIMEOUT = 0
-#assert N == 1, "Only consider batch_size = 1 in this template"
 
 #############
 # Debugging #
 #############
-def reset_gdbinit():
-    if 'server_port' not in DEV_CONFIG:
-        return
-    with open('/home/lweber/gdb-conf/.gdbinit', 'w') as f:
-        gdb_port = DEV_CONFIG['server_port'] - 3333
-        gdbinit_contents = (
-f"""layout asm
-target remote localhost:{gdb_port}
-set $pc = UTVMInit
-break UTVMDone
-""")
-        f.write(gdbinit_contents)
-reset_gdbinit()
+reset_gdbinit(DEV_CONFIG)
 
 
 ###################
@@ -206,9 +201,9 @@ def get_num_devices(dev_id):
 
 
 def tune_model(tasks):
-    print('FORCING N_PARALLEL TO 1')
-    #n_parallel = get_num_devices(DEVICE_ID)
-    n_parallel = 1
+    n_parallel = get_num_devices(DEVICE_ID)
+    #print('FORCING N_PARALLEL TO 1')
+    #n_parallel = 1
 
     print('[Tuning]')
     for i in range(len(tasks)):
@@ -222,7 +217,7 @@ def tune_model(tasks):
 
     measure_option = autotvm.measure_option(
             builder=autotvm.LocalBuilder(
-                build_func=tvm.micro.cross_compiler(DEV_CONFIG, micro.LibType.OPERATOR)),
+                build_func=tvm.micro.cross_compiler(DEV_CONFIG, micro.LibType.OPERATOR, lib_include_paths=CMSIS_INCLUDE_PATHS)),
             runner=autotvm.RPCRunner(DEVICE_ID, TRACKER_ADDR, TRACKER_PORT, n_parallel=n_parallel, number=N_PER_TRIAL, timeout=TIMEOUT)
             )
 
@@ -232,8 +227,10 @@ def tune_model(tasks):
         os.remove(tmp_log_file)
 
     for i, task in enumerate(reversed(tasks)):
+        input(f'starting task {i}: ({task.name}, {task.args})')
         prefix = "[Task %2d/%2d] " % (i+1, len(tasks))
-        tuner = XGBTuner(task, loss_type='rank')
+        #tuner = XGBTuner(task, loss_type='rank')
+        tuner = GATuner(task)
 
         # start tuning
         tuner.tune(n_trial=min(N_TRIAL, len(task.config_space)),
@@ -291,10 +288,9 @@ def tune_and_eval_model():
     #block = get_model('mobilenetv2_0.25', pretrained=True)
     #mod, params = relay.frontend.from_mxnet(block, shape={'data': INPUT_SHAPE}, dtype=DTYPE)
 
-    #mod = gen_conv2d_relay()
-    #params = {}
+    #mod, params = gen_conv2d('NHWC', 'HWOI')
 
-    mod, params = gen_cifar10_cnn(use_random_params=False)
+    mod, params = gen_cifar10_cnn('NHWC', 'HWOI', use_random_params=False)
 
     tasks = autotvm.task.extract_from_program(mod["main"], target=TARGET,
             params=params, ops=TUNE_OPS)

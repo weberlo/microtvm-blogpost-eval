@@ -38,7 +38,10 @@ from topi.nn.util import get_pad_tuple
 from topi.util import simplify, get_const_tuple, traverse_inline
 from topi.testing import conv2d_nchw_python, conv2d_nhwc_python
 
-from micro_eval.util import relay_micro_build, reset_gdbinit, intrin_gemm_1x4x1, gemm_1x4x1_impl, intrin_gemm_2x4x2, gemm_2x4x2_impl, get_comm_overhead, benchmark_micro_func
+from micro_eval.util import (
+        relay_micro_build, reset_gdbinit,
+        intrin_gemm_MxKxN, gemm_MxKxN_impl,
+        get_comm_overhead, benchmark_micro_func)
 
 from tvm.micro.device.arm import stm32f746xx
 from tvm.micro.device.arm.stm32f746xx import MemConstraint
@@ -60,7 +63,7 @@ CMSIS_INCLUDE_PATHS = [
 # µTVM CONFIG #
 ###############
 #DEV_CONFIG = tvm.micro.device.host.default_config()
-DEV_CONFIG = stm32f746xx.default_config('127.0.0.1', 6667)
+DEV_CONFIG = stm32f746xx.default_config('127.0.0.1', 6666)
 DEV_CONFIG['mem_layout'] = stm32f746xx.gen_mem_layout(OrderedDict([
     ('text', (14000, MemConstraint.ABSOLUTE_BYTES)),
     ('rodata', (100, MemConstraint.ABSOLUTE_BYTES)),
@@ -77,12 +80,11 @@ TARGET = tvm.target.create('c -device=micro_dev')
 ###############
 # CONV CONFIG #
 ###############
-#N, H, W, CO, CI = 1, 16, 16, 32, 32
 N, H, W, CO, CI = 1, 16, 16, 32, 32
 #N, H, W, CO, CI = 1, 4, 4, 4, 4
 KH, KW = 5, 5
 #STRIDES, PADDING, DILATION = (1, 1), (1, 1), 1
-STRIDES, PADDING, DILATION = (1, 1), 1, 1
+STRIDES, PADDING, DILATION = (1, 1), 2, 1
 IN_DTYPE = 'int8'
 OUT_DTYPE = 'int32'
 NCHW_DATA_SHAPE = (N, CI, H, W)
@@ -107,17 +109,6 @@ NCHW_OUTPUT_SHAPE = (N, CO, H, W)
 # TRIAL CONFIG #
 ################
 NUM_TRIALS = 15
-
-class TensorizeConfig(Enum):
-    NONE = 0
-    SMALL = 1  # 1x4x1
-    LARGE = 2  # 2x4x2
-
-##################
-# INTRINSIC DEFS #
-##################
-
-# TODO might need a special def for conv2d
 
 #########################
 # COMPUTE/SCHEDULE DEFS #
@@ -184,25 +175,19 @@ def conv2d_arm_micro_nhwc_template(data_spec, kernel_spec, strides, padding, dil
     kh, kw, ci = sched[conv].op.reduce_axis
 
     #sched[conv].reorder(n, oh, kh, kw, ow, co, ci)
+    if tens_config is None:
+        return sched, [data, kernel, conv]
+    else:
+        (M, K, N) = tens_config
 
-    if tens_config == TensorizeConfig.LARGE:
-        owo, owi = sched[conv].split(ow, factor=1)
-        coo, coi = sched[conv].split(co, factor=1)
-        cio, cii = sched[conv].split(ci, factor=4)
-        sched[conv].reorder(n, oh, kh, kw, owo, coo, cio, owi, coi, cii)
+    owo, owi = sched[conv].split(ow, factor=M)
+    cio, cii = sched[conv].split(ci, factor=K)
+    coo, coi = sched[conv].split(co, factor=N)
+    sched[conv].reorder(n, oh, kh, kw, owo, coo, cio, owi, coi, cii)
 
-        gemm = intrin_gemm_1x4x1(data.dtype, conv.dtype)
-        sched[conv].tensorize(owi, gemm)
-        sched[conv].pragma(n, "import_c", gemm_1x4x1_impl())
-    elif tens_config == TensorizeConfig.LARGE:
-        owo, owi = sched[conv].split(ow, factor=2)
-        coo, coi = sched[conv].split(co, factor=2)
-        cio, cii = sched[conv].split(ci, factor=4)
-        sched[conv].reorder(n, oh, kh, kw, owo, coo, cio, owi, coi, cii)
-
-        gemm = intrin_gemm_2x4x2(data.dtype, conv.dtype)
-        sched[conv].tensorize(owi, gemm)
-        sched[conv].pragma(n, "import_c", gemm_2x4x2_impl())
+    gemm = intrin_gemm_MxKxN(M, K, N, data.dtype, conv.dtype)
+    sched[conv].tensorize(owi, gemm)
+    sched[conv].pragma(n, "import_c", gemm_MxKxN_impl(M, K, N))
 
     return sched, [data, kernel, conv]
 
@@ -240,7 +225,7 @@ def check_output(data_np, kernel_np, micro_output_np, data_layout, kernel_layout
             data_layout.index('C'),
             data_layout.index('H'),
             data_layout.index('W'))
-    
+
     # convert the kernel layout to OIHW
     kernel_oihw_np = kernel_np.transpose(
             kernel_layout.index('O'),
@@ -262,7 +247,6 @@ def check_output(data_np, kernel_np, micro_output_np, data_layout, kernel_layout
 def eval_micro(sess, sched, arg_bufs, data_layout, kernel_layout):
     [data, kernel, conv] = arg_bufs
     c_mod = tvm.build(sched, arg_bufs, target=TARGET, name='conv2d')
-    print(c_mod.get_source())
 
     from topi.util import get_const_tuple
     data_np = np.random.randint(-10, 10, size=get_const_tuple(data.shape), dtype=data.dtype)
@@ -290,7 +274,8 @@ def eval_micro(sess, sched, arg_bufs, data_layout, kernel_layout):
 def main():
     reset_gdbinit(DEV_CONFIG)
 
-    time_overhead, cycle_overhead = get_comm_overhead(DEV_CONFIG)
+    #time_overhead, cycle_overhead = get_comm_overhead(DEV_CONFIG)
+    time_overhead, cycle_overhead = 0.0, 0
 
     with micro.Session(DEV_CONFIG) as sess:
         default_nchw_sched, default_nchw_arg_bufs = default_conv2d_nchw(
@@ -304,12 +289,17 @@ def main():
         default_nhwc_time -= time_overhead
 
         small_simd_sched, small_simd_arg_bufs = conv2d_arm_micro_nhwc_template(
-                NHWC_DATA_SPEC, HWOI_KERNEL_SPEC, STRIDES, PADDING, DILATION, OUT_DTYPE, TensorizeConfig.SMALL)
+                NHWC_DATA_SPEC, HWOI_KERNEL_SPEC, STRIDES, PADDING, DILATION, OUT_DTYPE, (1, 4, 1))
         small_simd_time = eval_micro(sess, small_simd_sched, small_simd_arg_bufs, 'NHWC', 'HWOI')
         small_simd_time -= time_overhead
 
+        medium_simd_sched, medium_simd_arg_bufs = conv2d_arm_micro_nhwc_template(
+                NHWC_DATA_SPEC, HWOI_KERNEL_SPEC, STRIDES, PADDING, DILATION, OUT_DTYPE, (2, 4, 2))
+        medium_simd_time = eval_micro(sess, medium_simd_sched, medium_simd_arg_bufs, 'NHWC', 'HWOI')
+        medium_simd_time -= time_overhead
+
         large_simd_sched, large_simd_arg_bufs = conv2d_arm_micro_nhwc_template(
-                NHWC_DATA_SPEC, HWOI_KERNEL_SPEC, STRIDES, PADDING, DILATION, OUT_DTYPE, TensorizeConfig.LARGE)
+                NHWC_DATA_SPEC, HWOI_KERNEL_SPEC, STRIDES, PADDING, DILATION, OUT_DTYPE, (4, 4, 4))
         large_simd_time = eval_micro(sess, large_simd_sched, large_simd_arg_bufs, 'NHWC', 'HWOI')
         large_simd_time -= time_overhead
 
@@ -317,6 +307,7 @@ def main():
         print(f'default NCHW time: {default_nchw_time}')
         print(f'default NHWC time: {default_nhwc_time}')
         print(f'small SIMD time: {small_simd_time}')
+        print(f'medium SIMD time: {medium_simd_time}')
         print(f'large SIMD time: {large_simd_time}')
 
 
