@@ -230,6 +230,7 @@ def eval_micro(samples, time_overhead, cycle_overhead):
                 #break
 
 
+assert False, "merge conv2d simd_v0 tuning results with e2e simd results"
 time_overhead, cycle_overhead = get_comm_overhead(TVM_DEV_CONFIG)
 samples = get_sample_points(NUM_SAMPLES)
 #eval_cmsis(samples, time_overhead, cycle_overhead)

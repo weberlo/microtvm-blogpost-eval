@@ -129,11 +129,11 @@ DEV_CONFIG['mem_layout'] = micro.device.arm.stm32f746xx.gen_mem_layout(OrderedDi
 DEVICE_ID = 'arm.stm32f746xx'
 TARGET = tvm.target.create('c -device=micro_dev')
 
-#N_TRIAL = 1500
-#EARLY_STOPPING = 800
+N_TRIAL = 1500
+EARLY_STOPPING = 800
 
-N_TRIAL = 1
-EARLY_STOPPING = 1
+#N_TRIAL = 1
+#EARLY_STOPPING = 1
 
 N_PER_TRIAL = 15
 E2E_LOG_FILE_NAME = f'{DEVICE_ID}.e2e.log'
@@ -227,7 +227,7 @@ def tune_model(tasks):
         os.remove(tmp_log_file)
 
     for i, task in enumerate(reversed(tasks)):
-        input(f'starting task {i}: ({task.name}, {task.args})')
+        #input(f'starting task {i}: ({task.name}, {task.args})')
         prefix = "[Task %2d/%2d] " % (i+1, len(tasks))
         #tuner = XGBTuner(task, loss_type='rank')
         tuner = GATuner(task)
