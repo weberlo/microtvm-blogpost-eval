@@ -31,7 +31,9 @@ from topi.nn.pad import pad
 from topi.nn.util import get_pad_tuple
 from topi.util import simplify, get_const_tuple, traverse_inline
 
-N, H, W, CO, CI, KH, KW = 1, 3, 3, 1, 1, 3, 3
+from micro_eval.util import get_c_source
+
+N, H, W, CO, CI, KH, KW = 1, 5, 5, 1, 1, 3, 3
 STRIDES, PADDING = (1, 1), 1
 LAYOUT = 'NHWC'
 DTYPE = 'int8'
@@ -42,6 +44,7 @@ KERNEL_SPEC = ('TENSOR', (CO, CI, KH, KW), DTYPE)
 
 def main():
     sched, arg_bufs = conv2d_arm_micro_nhwc_im2col(DATA_SPEC, KERNEL_SPEC, STRIDES, PADDING, LAYOUT, DTYPE)
+    input(get_c_source(sched, arg_bufs))
     target = 'llvm'
     ctx = tvm.context(target, 0)
     func = tvm.build(sched, arg_bufs, target=target, name='conv2d')
@@ -73,9 +76,6 @@ def conv2d_arm_micro_nhwc_im2col(data, kernel, stride, padding, layout, out_dtyp
         stride_h, stride_w = stride
 
     N, HI, WI, CI = data.shape
-    # I'm pretty sure this schedule only works for N == 1.  I think the im2col
-    # compute decl assumes it in the reshape (the `M = N * HO * WO part`).
-    assert N.value == 1
     CO, _, KH, KW = kernel.shape
 
     # compute the output shape
@@ -88,30 +88,33 @@ def conv2d_arm_micro_nhwc_im2col(data, kernel, stride, padding, layout, out_dtyp
     pad_after = [0, pad_down, pad_right, 0]
     padded_data = pad(data, pad_before, pad_after, name="padded_data")
 
+    IM2COL_BATCH_SIZE = 1
+    NUM_IM2COL_BATCHES = (HO * WO) // IM2COL_BATCH_SIZE
+
     _, PDH, PDW, _ = padded_data.shape
-    M = N * HO * WO
     K = CI * KH * KW
-    L = CO
-    # TODO: make sure we're using `N` correctly
+
     im2col_data = topi.transform.reshape(
         tvm.compute(
             (N, HO, WO, CI, KH, KW),
             lambda nn, yy, xx, cc, ky, kx:
                 padded_data[nn, yy + ky, xx + kx, cc]),
-        (M, K))
+        (N, NUM_IM2COL_BATCHES, IM2COL_BATCH_SIZE, K))
 
-    reshaped_kernel = topi.transform.reshape(kernel, (L, K))
+    reshaped_kernel = topi.transform.reshape(kernel, (CO, K))
 
     k = tvm.reduce_axis((0, K), 'k')
     conv = topi.transform.reshape(
         tvm.compute(
-            (M, L),
-            lambda x, y: tvm.sum(im2col_data[x, k] * reshaped_kernel[y, k], axis=k),
+            (N, NUM_IM2COL_BATCHES, IM2COL_BATCH_SIZE, CO),
+            lambda nn, i2c_batch, i2c_batch_idx, cc:
+                tvm.sum(im2col_data[nn, i2c_batch, i2c_batch_idx, k] * reshaped_kernel[cc, k], axis=k),
             name='conv2d',
             tag='conv2d_nhwc'),
         (N, HO, WO, CO))
     arg_bufs = [data, kernel, conv]
     sched = tvm.create_schedule(conv.op)
+
     return sched, arg_bufs
 
 
