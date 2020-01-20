@@ -31,7 +31,7 @@ from topi.nn.pad import pad
 from topi.nn.util import get_pad_tuple
 from topi.util import simplify, get_const_tuple, traverse_inline
 
-from micro_eval.util import get_c_source
+from micro_eval.util import show_c_source
 
 N, H, W, CO, CI, KH, KW = 1, 5, 5, 1, 1, 3, 3
 STRIDES, PADDING = (1, 1), 1
@@ -44,7 +44,7 @@ KERNEL_SPEC = ('TENSOR', (CO, CI, KH, KW), DTYPE)
 
 def main():
     sched, arg_bufs = conv2d_arm_micro_nhwc_im2col(DATA_SPEC, KERNEL_SPEC, STRIDES, PADDING, LAYOUT, DTYPE)
-    input(get_c_source(sched, arg_bufs))
+    show_c_source(sched, arg_bufs)
     target = 'llvm'
     ctx = tvm.context(target, 0)
     func = tvm.build(sched, arg_bufs, target=target, name='conv2d')
@@ -94,26 +94,34 @@ def conv2d_arm_micro_nhwc_im2col(data, kernel, stride, padding, layout, out_dtyp
     _, PDH, PDW, _ = padded_data.shape
     K = CI * KH * KW
 
-    im2col_data = topi.transform.reshape(
-        tvm.compute(
+    im2col_data = tvm.compute(
             (N, HO, WO, CI, KH, KW),
             lambda nn, yy, xx, cc, ky, kx:
-                padded_data[nn, yy + ky, xx + kx, cc]),
-        (N, NUM_IM2COL_BATCHES, IM2COL_BATCH_SIZE, K))
+                padded_data[nn, yy + ky, xx + kx, cc],
+            name='im2col_data')
+    reshaped_im2col_data = topi.transform.reshape(
+            im2col_data,
+            (N, NUM_IM2COL_BATCHES, IM2COL_BATCH_SIZE, K))
 
     reshaped_kernel = topi.transform.reshape(kernel, (CO, K))
 
     k = tvm.reduce_axis((0, K), 'k')
-    conv = topi.transform.reshape(
-        tvm.compute(
+    conv = tvm.compute(
             (N, NUM_IM2COL_BATCHES, IM2COL_BATCH_SIZE, CO),
             lambda nn, i2c_batch, i2c_batch_idx, cc:
-                tvm.sum(im2col_data[nn, i2c_batch, i2c_batch_idx, k] * reshaped_kernel[cc, k], axis=k),
+                tvm.sum(
+                    reshaped_im2col_data[nn, i2c_batch, i2c_batch_idx, k] * reshaped_kernel[cc, k],
+                    axis=k),
             name='conv2d',
-            tag='conv2d_nhwc'),
-        (N, HO, WO, CO))
-    arg_bufs = [data, kernel, conv]
-    sched = tvm.create_schedule(conv.op)
+            tag='conv2d_nhwc')
+    reshaped_conv = topi.transform.reshape(conv, (N, HO, WO, CO))
+
+    arg_bufs = [data, kernel, reshaped_conv]
+    sched = tvm.create_schedule(reshaped_conv.op)
+
+    # GOAL: change schedules so im2col_data can be computed within each batch iter of `conv`
+    #   sched[im2col_data].compute_at(sched[conv], conv.op.axis[???])
+    assert False, 'look at goal above'
 
     return sched, arg_bufs
 

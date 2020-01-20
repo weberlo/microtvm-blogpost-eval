@@ -430,8 +430,8 @@ def gen_cifar10_cnn(data_layout, kernel_layout, use_random_params=False):
     return mod, params
 
 
-def get_c_source(sched, arg_bufs):
-    return tvm.build(sched, arg_bufs, target='c').get_source()
+def show_c_source(sched, arg_bufs):
+    input(tvm.build(sched, arg_bufs, target='c').get_source())
 
 
 DEBUG_MODE = False
