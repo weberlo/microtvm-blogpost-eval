@@ -88,20 +88,42 @@ def conv2d_arm_micro_nhwc_im2col(data, kernel, stride, padding, layout, out_dtyp
     pad_after = [0, pad_down, pad_right, 0]
     padded_data = pad(data, pad_before, pad_after, name="padded_data")
 
-    IM2COL_BATCH_SIZE = 1
-    NUM_IM2COL_BATCHES = (HO * WO) // IM2COL_BATCH_SIZE
-
     _, PDH, PDW, _ = padded_data.shape
+
+    IM2COL_BATCH_SIZE = 5
+    NUM_IM2COL_BATCHES = (HO * WO) // IM2COL_BATCH_SIZE
     K = CI * KH * KW
 
+    # TODO reshapes fuck everything, so we need to manually fold in reshape
+    # into our index calculations. figure out how to fix that, because that is
+    # *shit* functionality.
+
+    #im2col_data = tvm.compute(
+    #        (N, HO, WO, CI, KH, KW),
+    #        lambda nn, yy, xx, cc, ky, kx:
+    #            padded_data[nn, yy + ky, xx + kx, cc],
+    #        name='im2col_data'
+    #        )
+    #reshaped_im2col_data = topi.transform.reshape(
+    #        im2col_data,
+    #        (N, NUM_IM2COL_BATCHES, IM2COL_BATCH_SIZE, K))
+
+    # yy = ((i2c_batch * IM2COL_BATCH_SIZE + i2c_batch_idx) // WO)
+    # xx = ((i2c_batch * IM2COL_BATCH_SIZE + i2c_batch_idx) % WO)
+    # cc = (kk // (KH * KW))
+    # ky = ((kk % (KH * KW)) // KW)
+    # kx = ((kk % (KH * KW)) % KW)
+
     im2col_data = tvm.compute(
-            (N, HO, WO, CI, KH, KW),
-            lambda nn, yy, xx, cc, ky, kx:
-                padded_data[nn, yy + ky, xx + kx, cc],
-            name='im2col_data')
-    reshaped_im2col_data = topi.transform.reshape(
-            im2col_data,
-            (N, NUM_IM2COL_BATCHES, IM2COL_BATCH_SIZE, K))
+            (N, NUM_IM2COL_BATCHES, IM2COL_BATCH_SIZE, K),
+            lambda nn, i2c_batch, i2c_batch_idx, kk:
+                padded_data[
+                    nn,
+                    ((i2c_batch * IM2COL_BATCH_SIZE + i2c_batch_idx) // WO) + ((kk % (KH * KW)) // KW),
+                    ((i2c_batch * IM2COL_BATCH_SIZE + i2c_batch_idx) % WO) + ((kk % (KH * KW)) % KW),
+                    kk // (KH * KW)],
+            name='im2col_data'
+            )
 
     reshaped_kernel = topi.transform.reshape(kernel, (CO, K))
 
@@ -110,7 +132,7 @@ def conv2d_arm_micro_nhwc_im2col(data, kernel, stride, padding, layout, out_dtyp
             (N, NUM_IM2COL_BATCHES, IM2COL_BATCH_SIZE, CO),
             lambda nn, i2c_batch, i2c_batch_idx, cc:
                 tvm.sum(
-                    reshaped_im2col_data[nn, i2c_batch, i2c_batch_idx, k] * reshaped_kernel[cc, k],
+                    im2col_data[nn, i2c_batch, i2c_batch_idx, k] * reshaped_kernel[cc, k],
                     axis=k),
             name='conv2d',
             tag='conv2d_nhwc')
@@ -119,9 +141,11 @@ def conv2d_arm_micro_nhwc_im2col(data, kernel, stride, padding, layout, out_dtyp
     arg_bufs = [data, kernel, reshaped_conv]
     sched = tvm.create_schedule(reshaped_conv.op)
 
-    # GOAL: change schedules so im2col_data can be computed within each batch iter of `conv`
-    #   sched[im2col_data].compute_at(sched[conv], conv.op.axis[???])
-    assert False, 'look at goal above'
+    ################################################################################
+
+    sched[im2col_data].compute_at(sched[conv], conv.op.axis[1])
+    #sched[reshaped_conv].compute_inline()
+    input(tvm.lower(sched, arg_bufs, simple_mode=True))
 
     return sched, arg_bufs
 
