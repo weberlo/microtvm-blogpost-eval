@@ -37,10 +37,10 @@ from topi.nn.pad import pad
 from topi.nn.util import get_pad_tuple
 from topi.util import simplify, get_const_tuple, traverse_inline
 
-from micro_eval.util import relay_micro_build, reset_gdbinit, intrin_gemm_MxKxN, gemm_MxKxN_impl, get_comm_overhead, benchmark_micro_func
-
 from tvm.micro.device.arm import stm32f746xx
 from tvm.micro.device.arm.stm32f746xx import MemConstraint
+
+from micro_eval.util import relay_micro_build, reset_gdbinit, intrin_gemm_MxKxN, gemm_MxKxN_impl, get_comm_overhead, benchmark_micro_func
 
 ################
 # CMSIS CONFIG #
@@ -90,11 +90,6 @@ B_TENSOR = ('TENSOR', B_SHAPE, IN_DTYPE)
 ################
 NUM_TRIALS = 15
 
-class TensorizeConfig(Enum):
-    NONE = 0
-    SMALL = 1  # 1x4x1
-    LARGE = 2  # 2x4x2
-
 # NOTE this is transposed matmul
 # NOTE only works for reduction axes that are multiples of 4
 def matmul_arm_micro_template(A, B, out_dtype, tens_config):
@@ -132,14 +127,14 @@ def matmul_arm_micro_template(A, B, out_dtype, tens_config):
 
     gemm = intrin_gemm_MxKxN(M, K, N, A.dtype, C.dtype)
     sched[C].tensorize(xi, gemm)
-    sched[C].pragma(xo, "import_c", gemm_MxKxN_impl(M, K, N))
+    sched[C].pragma(xo, 'import_c', gemm_MxKxN_impl(M, K, N))
 
     return sched, [A, B, C]
 
 
 def eval_micro(sess, sched, arg_bufs):
     [A, B, C] = arg_bufs
-    c_mod = tvm.build(sched, [A, B, C], target=TARGET, name="gemm")
+    c_mod = tvm.build(sched, [A, B, C], target=TARGET, name='gemm')
 
     from topi.util import get_const_tuple
     A_np = np.random.randint(-30, 30, size=get_const_tuple(A.shape)).astype(A.dtype)
@@ -184,5 +179,5 @@ def main():
         print(f'large SIMD time: {large_simd_time}')
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

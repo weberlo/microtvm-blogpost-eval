@@ -39,6 +39,9 @@ from topi.util import simplify, get_const_tuple, traverse_inline
 from topi.testing import conv2d_nchw_python, conv2d_nhwc_python
 
 from micro_eval.util import (
+        NamedShape,
+        transform_data_layout,
+        print_c_source,
         relay_micro_build, reset_gdbinit,
         intrin_gemm_MxKxN, gemm_MxKxN_impl,
         get_comm_overhead, benchmark_micro_func)
@@ -68,7 +71,8 @@ DEV_CONFIG['mem_layout'] = stm32f746xx.gen_mem_layout(OrderedDict([
     ('text', (14000, MemConstraint.ABSOLUTE_BYTES)),
     ('rodata', (100, MemConstraint.ABSOLUTE_BYTES)),
     ('data', (100, MemConstraint.ABSOLUTE_BYTES)),
-    ('bss', (600, MemConstraint.ABSOLUTE_BYTES)),
+    #('bss', (600, MemConstraint.ABSOLUTE_BYTES)),
+    ('bss', (1024, MemConstraint.ABSOLUTE_BYTES)),
     ('args', (8096, MemConstraint.ABSOLUTE_BYTES)),
     ('heap', (50.0, MemConstraint.WEIGHT)),
     ('workspace', (132000, MemConstraint.ABSOLUTE_BYTES)),
@@ -80,40 +84,49 @@ TARGET = tvm.target.create('c -device=micro_dev')
 ###############
 # CONV CONFIG #
 ###############
-N, H, W, CO, CI = 1, 16, 16, 32, 32
-#N, H, W, CO, CI = 1, 4, 4, 4, 4
+#N, H, W, CO, CI = 1, 16, 16, 32, 32
+N, H, W, CO, CI = 1, 16, 16, 4, 4
 KH, KW = 5, 5
 #STRIDES, PADDING, DILATION = (1, 1), (1, 1), 1
 STRIDES, PADDING, DILATION = (1, 1), 2, 1
 IN_DTYPE = 'int8'
 OUT_DTYPE = 'int32'
-NCHW_DATA_SHAPE = (N, CI, H, W)
-NHWC_DATA_SHAPE = (N, H, W, CI)
-HWIO_KERNEL_SHAPE = (KH, KW, CI, CO)
-HWOI_KERNEL_SHAPE = (KH, KW, CO, CI)
-OIHW_KERNEL_SHAPE = (CO, CI, KH, KW)
 
-NCHW_DATA_SPEC = ('TENSOR', NCHW_DATA_SHAPE, IN_DTYPE)
-OIHW_KERNEL_SPEC = ('TENSOR', OIHW_KERNEL_SHAPE, IN_DTYPE)
-
-NHWC_DATA_SPEC = ('TENSOR', NHWC_DATA_SHAPE, IN_DTYPE)
-HWIO_KERNEL_SPEC = ('TENSOR', HWIO_KERNEL_SHAPE, IN_DTYPE)
-
-HWOI_KERNEL_SPEC = ('TENSOR', HWOI_KERNEL_SHAPE, IN_DTYPE)
-
+DATA_SHAPE = NamedShape(IN_DTYPE, N=N, C=CI, H=H, W=W)
+KERNEL_SHAPE = NamedShape(IN_DTYPE, H=KH, W=KW, I=CI, O=CO)
+OUTPUT_SHAPE = NamedShape(IN_DTYPE, N=N, C=CO, H=H, W=W)
 BIAS_SHAPE = (CO,)
-NHWC_OUTPUT_SHAPE = (N, H, W, CO)
-NCHW_OUTPUT_SHAPE = (N, CO, H, W)
 
 ################
 # TRIAL CONFIG #
 ################
 NUM_TRIALS = 15
+NUM_BATCH_SIZE_CANDIDATES = 5
 
 #########################
 # COMPUTE/SCHEDULE DEFS #
 #########################
-def conv2d_arm_micro_nhwc(Input, Filter, stride, padding, dilation, out_dtype):
+
+def default_conv2d(data_spec, kernel_spec, data_layout, strides, padding, dilation, out_dtype):
+    data_typ, data_shape, data_dtype = data_spec
+    kernel_typ, kernel_shape, kernel_dtype = kernel_spec
+    assert data_typ == 'TENSOR'
+    assert kernel_typ == 'TENSOR'
+    data = tvm.placeholder(data_shape, name='data', dtype=data_dtype)
+    kernel = tvm.placeholder(kernel_shape, name='kernel', dtype=kernel_dtype)
+
+    if data_layout == 'NCHW':
+        conv = conv2d_nchw(data, kernel, strides, padding, dilation, out_dtype)
+    elif data_layout == 'NHWC':
+        conv = conv2d_nhwc(data, kernel, strides, padding, dilation, out_dtype)
+    else:
+        assert False
+
+    sched = tvm.create_schedule([conv.op])
+    return sched, [data, kernel, conv]
+
+
+def conv2d_arm_micro_nhwc_direct(Input, Filter, stride, padding, dilation, out_dtype):
     assert isinstance(stride, int) or len(stride) == 2
     assert isinstance(dilation, int) or len(dilation) == 2
 
@@ -162,7 +175,7 @@ def conv2d_arm_micro_nhwc_template(data_spec, kernel_spec, strides, padding, dil
     kernel = tvm.placeholder(kernel_shape, name='kernel', dtype=kernel_dtype)
 
     #conv = conv2d_nchw(data, kernel, strides, padding, dilation, out_dtype)
-    conv = conv2d_arm_micro_nhwc(data, kernel, strides, padding, dilation, out_dtype)
+    conv = conv2d_arm_micro_nhwc_direct(data, kernel, strides, padding, dilation, out_dtype)
 
     sched = tvm.create_schedule([conv.op])
 
@@ -192,53 +205,138 @@ def conv2d_arm_micro_nhwc_template(data_spec, kernel_spec, strides, padding, dil
     return sched, [data, kernel, conv]
 
 
-def default_conv2d_nchw(data_spec, kernel_spec, strides, padding, dilation, out_dtype):
-    data_typ, data_shape, data_dtype = data_spec
-    kernel_typ, kernel_shape, kernel_dtype = kernel_spec
+def conv2d_arm_micro_nhwc_partial_im2col(data, kernel, stride, padding, layout, out_dtype, im2col_batch_size):
+    data_typ, data_shape, data_dtype = data
+    kernel_typ, kernel_shape, kernel_dtype = kernel
     assert data_typ == 'TENSOR'
     assert kernel_typ == 'TENSOR'
     data = tvm.placeholder(data_shape, name='data', dtype=data_dtype)
     kernel = tvm.placeholder(kernel_shape, name='kernel', dtype=kernel_dtype)
 
-    conv = conv2d_nchw(data, kernel, strides, padding, dilation, out_dtype)
-    sched = tvm.create_schedule([conv.op])
-    return sched, [data, kernel, conv]
+    assert isinstance(stride, int) or len(stride) == 2
+    assert layout == 'NHWC'
+
+    if isinstance(stride, int):
+        stride_h = stride_w = stride
+    else:
+        stride_h, stride_w = stride
+
+    N, HI, WI, CI = data.shape
+    CO, _, KH, KW = kernel.shape
+
+    # compute the output shape
+    pad_top, pad_left, pad_down, pad_right = get_pad_tuple(
+        padding, (KH, KW))
+    HO = simplify((HI - KH + pad_top + pad_down) // stride_h + 1)
+    WO = simplify((WI - KW + pad_left + pad_right) // stride_w + 1)
+
+    pad_before = [0, pad_top, pad_left, 0]
+    pad_after = [0, pad_down, pad_right, 0]
+    padded_data = pad(data, pad_before, pad_after, name='padded_data')
+
+    _, PDH, PDW, _ = padded_data.shape
+
+    assert ((HO.value * WO.value) % im2col_batch_size) == 0, 'im2col batch size must be a factor of width x height'
+    num_im2col_batches = (HO * WO) // im2col_batch_size
+    K = CI * KH * KW
+
+    # TODO reshapes fuck everything, so we need to manually fold in reshape
+    # into our index calculations. figure out how to fix that, because that is
+    # *shit* functionality.
+
+    #im2col_data = tvm.compute(
+    #        (N, HO, WO, CI, KH, KW),
+    #        lambda nn, yy, xx, cc, ky, kx:
+    #            padded_data[nn, yy + ky, xx + kx, cc],
+    #        name='im2col_data'
+    #        )
+    #reshaped_im2col_data = topi.transform.reshape(
+    #        im2col_data,
+    #        (N, num_im2col_batches, im2col_batch_size, K))
+
+    # yy = ((i2c_batch * im2col_batch_size + i2c_batch_idx) // WO)
+    # xx = ((i2c_batch * im2col_batch_size + i2c_batch_idx) % WO)
+    # cc = (kk // (KH * KW))
+    # ky = ((kk % (KH * KW)) // KW)
+    # kx = ((kk % (KH * KW)) % KW)
+
+    # TODO simultaneously expand to int16 for SIMD stuff
+    im2col_data = tvm.compute(
+            (N, num_im2col_batches, im2col_batch_size, K),
+            lambda nn, i2c_batch, i2c_batch_idx, kk:
+                padded_data[
+                    nn,
+                    ((i2c_batch * im2col_batch_size + i2c_batch_idx) // WO) + ((kk % (KH * KW)) // KW),
+                    ((i2c_batch * im2col_batch_size + i2c_batch_idx) % WO) + ((kk % (KH * KW)) % KW),
+                    kk // (KH * KW)],
+            name='im2col_data')
+
+    reshaped_kernel = topi.transform.reshape(kernel, (CO, K))
+
+    k = tvm.reduce_axis((0, K), 'k')
+    conv = tvm.compute(
+            (N, num_im2col_batches, im2col_batch_size, CO),
+            lambda nn, i2c_batch, i2c_batch_idx, cc:
+                tvm.sum(
+                    im2col_data[nn, i2c_batch, i2c_batch_idx, k].astype(out_dtype) * reshaped_kernel[cc, k].astype(out_dtype),
+                    axis=k),
+            name='conv2d',
+            tag='conv2d_nhwc')
+    reshaped_conv = topi.transform.reshape(conv, (N, HO, WO, CO))
+
+    # i2c_batch = (yy * WO + xx) // num_im2col_batches
+    # i2c_batch_idx = (yy * WO + xx) % im2col_batch_size
+
+    #conv = tvm.compute(
+    #        (N, HO, WO, CO),
+    #        lambda nn, yy, xx, cc:
+    #            tvm.sum(
+    #                im2col_data[
+    #                    nn,
+    #                    (yy * WO + xx) // num_im2col_batches,
+    #                    (yy * WO + xx) % im2col_batch_size,
+    #                    k].astype(out_dtype) * reshaped_kernel[cc, k].astype(out_dtype),
+    #                axis=k),
+    #        name='conv2d',
+    #        tag='conv2d_nhwc')
+
+    arg_bufs = [data, kernel, reshaped_conv]
+    sched = tvm.create_schedule(reshaped_conv.op)
+
+    ################################################################################
+
+    # NOTE: If we try to compute the reshape inline, then tensorization fails.
+    # NOTE it gets worse though. because now the nonreshaped conv is generated
+    # in a workspace, before being copied over to the reshaped tensor.
+
+    # there might also be a bug with tensorization though.
+    #sched[reshaped_kernel].compute_inline()
+    sched[padded_data].compute_inline()
+    sched[im2col_data].compute_at(sched[conv], conv.op.axis[1])
+
+    #hw = sched[conv].fuse(ho, wo)
+    #i2c_batch, i2c_batch_idx = sched[conv].split(hw, factor=im2col_batch_size)
+
+    # tile reduction axes
+    n, i2c_batch, i2c_batch_idx, co = sched[conv].op.axis
+    k, = sched[conv].op.reduce_axis
+    sched[conv].reorder(n, i2c_batch, i2c_batch_idx, co, k)
+
+    gemm = intrin_gemm_MxKxN(im2col_batch_size, K, CO, data.dtype, conv.dtype)
+    sched[conv].tensorize(i2c_batch_idx, gemm)
+    sched[conv].pragma(n, 'import_c', gemm_MxKxN_impl(im2col_batch_size, K, CO))
+
+    return sched, arg_bufs
 
 
-def default_conv2d_nhwc(data_spec, kernel_spec, strides, padding, dilation, out_dtype):
-    data_typ, data_shape, data_dtype = data_spec
-    kernel_typ, kernel_shape, kernel_dtype = kernel_spec
-    assert data_typ == 'TENSOR'
-    assert kernel_typ == 'TENSOR'
-    data = tvm.placeholder(data_shape, name='data', dtype=data_dtype)
-    kernel = tvm.placeholder(kernel_shape, name='kernel', dtype=kernel_dtype)
-
-    conv = conv2d_nhwc(data, kernel, strides, padding, dilation, out_dtype)
-    sched = tvm.create_schedule([conv.op])
-    return sched, [data, kernel, conv]
-
+##############
+# EVALUATION #
+##############
 
 def check_output(data_np, kernel_np, micro_output_np, data_layout, kernel_layout):
-    # convert the data layout to NCHW
-    data_nchw_np = data_np.transpose(
-            data_layout.index('N'),
-            data_layout.index('C'),
-            data_layout.index('H'),
-            data_layout.index('W'))
-
-    # convert the kernel layout to OIHW
-    kernel_oihw_np = kernel_np.transpose(
-            kernel_layout.index('O'),
-            kernel_layout.index('I'),
-            kernel_layout.index('H'),
-            kernel_layout.index('W'))
-
-    # convert the output layout to NCHW
-    micro_output_nchw_np = micro_output_np.transpose(
-            data_layout.index('N'),
-            data_layout.index('C'),
-            data_layout.index('H'),
-            data_layout.index('W'))
+    data_nchw_np = transform_data_layout(data_np, data_layout, 'NCHW')
+    kernel_oihw_np = transform_data_layout(kernel_np, kernel_layout, 'OIHW')
+    micro_output_nchw_np = transform_data_layout(micro_output_np, data_layout, 'NCHW')
 
     topi_output_np = conv2d_nchw_python(data_nchw_np, kernel_oihw_np, STRIDES, PADDING)
     tvm.testing.assert_allclose(micro_output_nchw_np, topi_output_np)
@@ -278,37 +376,66 @@ def main():
     time_overhead, cycle_overhead = 0.0, 0
 
     with micro.Session(DEV_CONFIG) as sess:
-        default_nchw_sched, default_nchw_arg_bufs = default_conv2d_nchw(
-                NCHW_DATA_SPEC, OIHW_KERNEL_SPEC, STRIDES, PADDING, DILATION, OUT_DTYPE)
-        default_nchw_time = eval_micro(sess, default_nchw_sched, default_nchw_arg_bufs, 'NCHW', 'OIHW')
-        default_nchw_time -= time_overhead
+        ## default schedules
+        #default_results = []
+        #for data_layout, kernel_layout in [('NCHW', 'OIHW'), ('NHWC', 'HWIO')]:
+        #    sched, arg_bufs = default_conv2d(
+        #            DATA_SHAPE.get_spec(data_layout), KERNEL_SHAPE.get_spec(kernel_layout),
+        #            data_layout,
+        #            STRIDES, PADDING, DILATION, OUT_DTYPE)
+        #    time = eval_micro(sess, sched, arg_bufs, data_layout, kernel_layout)
+        #    time -= time_overhead
+        #    default_results.append(((data_layout, kernel_layout), time))
 
-        default_nhwc_sched, default_nhwc_arg_bufs = default_conv2d_nhwc(
-                NHWC_DATA_SPEC, HWIO_KERNEL_SPEC, STRIDES, PADDING, DILATION, OUT_DTYPE)
-        default_nhwc_time = eval_micro(sess, default_nhwc_sched, default_nhwc_arg_bufs, 'NHWC', 'HWIO')
-        default_nhwc_time -= time_overhead
+        # SIMD on direct convolution
+        direct_simd_results = []
+        for microkernel_shape in [(1, 4, 1), (2, 4, 2), (4, 4, 4)]:
+            sched, arg_bufs = conv2d_arm_micro_nhwc_template(
+                    DATA_SHAPE.get_spec('NHWC'), KERNEL_SHAPE.get_spec('HWOI'),
+                    STRIDES, PADDING, DILATION, OUT_DTYPE, microkernel_shape)
+            time = eval_micro(sess, sched, arg_bufs, 'NHWC', 'HWOI')
+            time -= time_overhead
+            direct_simd_results.append((microkernel_shape, time))
 
-        small_simd_sched, small_simd_arg_bufs = conv2d_arm_micro_nhwc_template(
-                NHWC_DATA_SPEC, HWOI_KERNEL_SPEC, STRIDES, PADDING, DILATION, OUT_DTYPE, (1, 4, 1))
-        small_simd_time = eval_micro(sess, small_simd_sched, small_simd_arg_bufs, 'NHWC', 'HWOI')
-        small_simd_time -= time_overhead
+        # SIMD on partial im2col convolution
+        im2col_simd_results = []
+        max_batch_size = H * W
+        # try factors of the max batch size
+        batch_sizes = [i for i in range(1, max_batch_size+1) if max_batch_size % i == 0]
+        if len(batch_sizes) > NUM_BATCH_SIZE_CANDIDATES:
+            batch_sizes = batch_sizes[-NUM_BATCH_SIZE_CANDIDATES:]
+        for i2c_batch_size in batch_sizes:
+            sched, arg_bufs = conv2d_arm_micro_nhwc_partial_im2col(
+                    DATA_SHAPE.get_spec('NHWC'), KERNEL_SHAPE.get_spec('OIHW'),
+                    STRIDES, PADDING, 'NHWC', OUT_DTYPE,
+                    i2c_batch_size)
+            print_c_source(sched, arg_bufs)
+            time = eval_micro(sess, sched, arg_bufs, 'NHWC', 'OIHW')
+            time -= time_overhead
+            im2col_simd_results.append((i2c_batch_size, time))
 
-        medium_simd_sched, medium_simd_arg_bufs = conv2d_arm_micro_nhwc_template(
-                NHWC_DATA_SPEC, HWOI_KERNEL_SPEC, STRIDES, PADDING, DILATION, OUT_DTYPE, (2, 4, 2))
-        medium_simd_time = eval_micro(sess, medium_simd_sched, medium_simd_arg_bufs, 'NHWC', 'HWOI')
-        medium_simd_time -= time_overhead
-
-        large_simd_sched, large_simd_arg_bufs = conv2d_arm_micro_nhwc_template(
-                NHWC_DATA_SPEC, HWOI_KERNEL_SPEC, STRIDES, PADDING, DILATION, OUT_DTYPE, (4, 4, 4))
-        large_simd_time = eval_micro(sess, large_simd_sched, large_simd_arg_bufs, 'NHWC', 'HWOI')
-        large_simd_time -= time_overhead
-
+        #[default_nchw_time, default_nhwc_time] = default_results
+        #print()
+        #print('###########')
+        #print('# DEFAULT #')
+        #print('###########')
+        #print(f'  NCHW time: {default_nchw_time}')
+        #print(f'  NHWC time: {default_nhwc_time}')
+        #print()
+        [small_direct_simd_time, medium_direct_simd_time, large_direct_simd_time] = direct_simd_results
+        print('######################')
+        print('# DIRECT CONV + SIMD #')
+        print('######################')
+        print(f'  small time: {small_direct_simd_time}')
+        print(f'  medium time: {medium_direct_simd_time}')
+        print(f'  large time: {large_direct_simd_time}')
         print()
-        print(f'default NCHW time: {default_nchw_time}')
-        print(f'default NHWC time: {default_nhwc_time}')
-        print(f'small SIMD time: {small_simd_time}')
-        print(f'medium SIMD time: {medium_simd_time}')
-        print(f'large SIMD time: {large_simd_time}')
+        print('######################')
+        print('# IM2COL CONV + SIMD #')
+        print('######################')
+        for (batch_size, i2c_simd_time) in im2col_simd_results:
+            print(f'  batch of {batch_size} time: {i2c_simd_time}')
+        print()
 
 
 if __name__ == "__main__":
