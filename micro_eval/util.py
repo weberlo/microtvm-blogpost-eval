@@ -24,10 +24,6 @@ from topi.util import simplify, get_const_tuple, traverse_inline
 # init autotvm env to register uTVM ops
 TaskExtractEnv()
 
-def _conv2d_arm_micro_nhwc_compute(data, kernel, stride, padding, dilation, out_dtype):
-    return conv
-
-
 @autotvm.register_topi_compute(conv2d, 'micro_dev', ['direct'])
 def conv2d_arm_micro_nhwc(cfg, data, kernel, stride, padding, dilation, layout, out_dtype):
     assert isinstance(stride, int) or len(stride) == 2

@@ -376,16 +376,16 @@ def main():
     time_overhead, cycle_overhead = 0.0, 0
 
     with micro.Session(DEV_CONFIG) as sess:
-        ## default schedules
-        #default_results = []
-        #for data_layout, kernel_layout in [('NCHW', 'OIHW'), ('NHWC', 'HWIO')]:
-        #    sched, arg_bufs = default_conv2d(
-        #            DATA_SHAPE.get_spec(data_layout), KERNEL_SHAPE.get_spec(kernel_layout),
-        #            data_layout,
-        #            STRIDES, PADDING, DILATION, OUT_DTYPE)
-        #    time = eval_micro(sess, sched, arg_bufs, data_layout, kernel_layout)
-        #    time -= time_overhead
-        #    default_results.append(((data_layout, kernel_layout), time))
+        # default schedules
+        default_results = []
+        for data_layout, kernel_layout in [('NCHW', 'OIHW'), ('NHWC', 'HWIO')]:
+            sched, arg_bufs = default_conv2d(
+                    DATA_SHAPE.get_spec(data_layout), KERNEL_SHAPE.get_spec(kernel_layout),
+                    data_layout,
+                    STRIDES, PADDING, DILATION, OUT_DTYPE)
+            time = eval_micro(sess, sched, arg_bufs, data_layout, kernel_layout)
+            time -= time_overhead
+            default_results.append(((data_layout, kernel_layout), time))
 
         # SIMD on direct convolution
         direct_simd_results = []
@@ -414,14 +414,14 @@ def main():
             time -= time_overhead
             im2col_simd_results.append((i2c_batch_size, time))
 
-        #[default_nchw_time, default_nhwc_time] = default_results
-        #print()
-        #print('###########')
-        #print('# DEFAULT #')
-        #print('###########')
-        #print(f'  NCHW time: {default_nchw_time}')
-        #print(f'  NHWC time: {default_nhwc_time}')
-        #print()
+        [default_nchw_time, default_nhwc_time] = default_results
+        print()
+        print('###########')
+        print('# DEFAULT #')
+        print('###########')
+        print(f'  NCHW time: {default_nchw_time}')
+        print(f'  NHWC time: {default_nhwc_time}')
+        print()
         [small_direct_simd_time, medium_direct_simd_time, large_direct_simd_time] = direct_simd_results
         print('######################')
         print('# DIRECT CONV + SIMD #')
