@@ -6,10 +6,10 @@
 #include <arm_math.h>
 #include <arm_nnfunctions.h>
 
-//#define IP1_BIAS_LSHIFT 3
-//#define IP1_OUT_RSHIFT 5
-#define IP1_BIAS_LSHIFT 0
-#define IP1_OUT_RSHIFT 0
+#define IP1_BIAS_LSHIFT 3
+#define IP1_OUT_RSHIFT 5
+//#define IP1_BIAS_LSHIFT 0
+//#define IP1_OUT_RSHIFT 0
 
 int32_t arm_dense_wrapper(TVMValue* arg_values, int* arg_type_codes, int32_t num_args) {
   void* data_handle = ((TVMValue*)arg_values)[0].v_handle;
@@ -40,7 +40,7 @@ int32_t arm_dense_wrapper(TVMValue* arg_values, int* arg_type_codes, int32_t num
   //void* col_buffer = TVMBackendAllocWorkspace(1, dev_id, 6400, 2, 8);
   void* col_buffer = TVMBackendAllocWorkspace(1, dev_id, data_shape[3] * 100, 2, 8);
   if (col_buffer == NULL) {
-    return UTVM_ERR_ALLOC_TOO_LARGE;
+    return UTVM_ERR_WS_OUT_OF_SPACE;
   }
 
   arm_fully_connected_q7_opt(
@@ -48,8 +48,6 @@ int32_t arm_dense_wrapper(TVMValue* arg_values, int* arg_type_codes, int32_t num
       weight,
       weight_shape[1],
       weight_shape[0],
-      //weight_shape[1],
-      //weight_shape[0],
       IP1_BIAS_LSHIFT,
       IP1_OUT_RSHIFT,
       bias,
