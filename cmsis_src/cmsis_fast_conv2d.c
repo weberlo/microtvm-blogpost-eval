@@ -16,7 +16,8 @@ int32_t arm_fast_conv2d_wrapper(TVMValue* arg_values, int* arg_type_codes, int32
   void* data_handle = (((TVMValue*)arg_values)[0].v_handle);
   void* kernel_handle = (((TVMValue*)arg_values)[1].v_handle);
   void* bias_handle = (((TVMValue*)arg_values)[2].v_handle);
-  void* output_handle = (((TVMValue*)arg_values)[3].v_handle);
+  void* metadata_handle = (((TVMValue*)arg_values)[3].v_handle);
+  void* output_handle = (((TVMValue*)arg_values)[4].v_handle);
 
   int32_t dev_type = (((TVMArray*)data_handle)[0].ctx.device_type);
   int32_t dev_id = (((TVMArray*)data_handle)[0].ctx.device_id);
@@ -33,6 +34,20 @@ int32_t arm_fast_conv2d_wrapper(TVMValue* arg_values, int* arg_type_codes, int32
   int64_t* bias_shape = (int64_t*)(((TVMArray*)bias_handle)[0].shape);
   int64_t* bias_strides = (int64_t*)(((TVMArray*)bias_handle)[0].strides);
 
+  // HACK: to pass parameters (e.g., padding and stride) to CMSIS-NN, we include a tensor that
+  // encodes these values
+  int16_t* metadata = (int16_t*)(((TVMArray*)metadata_handle)[0].data);
+  int64_t* metadata_shape = (int64_t*)(((TVMArray*)metadata_handle)[0].shape);
+  int64_t* metadata_strides = (int64_t*)(((TVMArray*)metadata_handle)[0].strides);
+  if (metadata_shape[0] != 4) {
+    // TODO set an error code
+    return -1;
+  }
+  uint16_t padding = metadata[0];
+  uint16_t stride = metadata[1];
+  uint16_t bias_left_shift = metadata[2];
+  uint16_t out_right_shift = metadata[3];
+
   int8_t* output = (int8_t*)(((TVMArray*)output_handle)[0].data);
   int64_t* output_shape = (int64_t*)(((TVMArray*)output_handle)[0].shape);
   int64_t* output_strides = (int64_t*)(((TVMArray*)output_handle)[0].strides);
@@ -43,7 +58,9 @@ int32_t arm_fast_conv2d_wrapper(TVMValue* arg_values, int* arg_type_codes, int32
   uint16_t out_ch = output_shape[3];
   uint16_t kernel_size = kernel_shape[2];
 
-  void* col_buffer = TVMBackendAllocWorkspace(1, dev_id, (uint64_t) 6400, 2, 8);
+  // void* col_buffer = TVMBackendAllocWorkspace(1, dev_id, (uint64_t) 6400, 2, 8);
+  void* col_buffer = TVMBackendAllocWorkspace(
+    1, dev_id, (uint64_t) (2 * in_ch * kernel_size * kernel_size * sizeof(q15_t)), 2, 8);
   if (col_buffer == NULL) {
     return -1;
   }
@@ -55,11 +72,11 @@ int32_t arm_fast_conv2d_wrapper(TVMValue* arg_values, int* arg_type_codes, int32
     /* wt         */  kernel,
     /* ch_im_out  */  out_ch,
     /* dim_kernel */  kernel_size,
-    /* padding    */  PAD,
-    /* stride     */  STRIDE,
+    /* padding    */  padding,
+    /* stride     */  stride,
     /* bias       */  bias,
-    /* bias_shift */  BIAS_LSHIFT,
-    /* out_shift  */  OUT_RSHIFT,
+    /* bias_shift */  bias_left_shift,
+    /* out_shift  */  out_right_shift,
     /* Im_out     */  output,
     /* dim_im_out */  dim_im_out,
     /* bufferA    */  (q15_t*)col_buffer,

@@ -6,10 +6,13 @@
 #include <arm_math.h>
 #include <arm_nnfunctions.h>
 
-#define IP1_BIAS_LSHIFT 3
-#define IP1_OUT_RSHIFT 5
-//#define IP1_BIAS_LSHIFT 0
-//#define IP1_OUT_RSHIFT 0
+// original params
+// #define IP1_BIAS_LSHIFT 3
+// #define IP1_OUT_RSHIFT 5
+
+// use zeros to simplify comparison
+#define IP1_BIAS_LSHIFT 0
+#define IP1_OUT_RSHIFT 0
 
 int32_t arm_dense_wrapper(TVMValue* arg_values, int* arg_type_codes, int32_t num_args) {
   void* data_handle = ((TVMValue*)arg_values)[0].v_handle;

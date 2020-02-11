@@ -4,10 +4,10 @@ def gen_cifar10_cnn(data_layout, kernel_layout, use_random_params=False):
     # TODO change relay/op/tensor/unary.cc _make.clip to accept exprs instead of doubles
     # TODO discrepancies between outputs might be a result of the bias_add op
     # not matching the semantics of the CMSIS bias add.
-    data_shape = NamedShape(N=1, C=3, H=32, W=32).get_shape(data_layout)
-    conv0_kernel_shape = NamedShape(O=32, I=3, H=5, W=5).get_shape(kernel_layout)
-    conv1_kernel_shape = NamedShape(O=32, I=32, H=5, W=5).get_shape(kernel_layout)
-    conv2_kernel_shape = NamedShape(O=64, I=32, H=5, W=5).get_shape(kernel_layout)
+    data_shape = NamedType(dict(N=1, C=3, H=32, W=32)).get_shape(data_layout)
+    conv0_kernel_shape = NamedType(dict(O=32, I=3, H=5, W=5)).get_shape(kernel_layout)
+    conv1_kernel_shape = NamedType(dict(O=32, I=32, H=5, W=5)).get_shape(kernel_layout)
+    conv2_kernel_shape = NamedType(dict(O=64, I=32, H=5, W=5)).get_shape(kernel_layout)
     bias_add_axis = data_layout.index('C')
     mod = relay.fromtext(f"""
     v0.0.4
@@ -111,20 +111,20 @@ def gen_cifar10_cnn(data_layout, kernel_layout, use_random_params=False):
             orig_np = np.array(params[name]).astype(dtype)
 
             if name == 'mean_data':
-                shape = NamedShape(data_layout, param_shape)
+                shape = NamedType(data_layout, param_shape)
                 cmsis_data_layout = 'NHWC'
                 cmsis_shape = shape.get_shape(cmsis_data_layout)
                 cmsis_np = orig_np.reshape(cmsis_shape)
                 relay_np = transform_data_layout(cmsis_np, cmsis_data_layout, data_layout)
             elif 'conv' in name and 'weight' in name:
-                shape = NamedShape(kernel_layout, param_shape)
+                shape = NamedType(kernel_layout, param_shape)
                 cmsis_kernel_layout = 'IHWO'
                 cmsis_shape = shape.get_shape(cmsis_kernel_layout)
                 cmsis_np = orig_np.reshape(cmsis_shape)
                 relay_np = transform_data_layout(cmsis_np, cmsis_kernel_layout, kernel_layout)
             elif 'dense' in name and 'weight' in name:
                 dense_layout = 'OI'
-                shape = NamedShape(dense_layout, param_shape)
+                shape = NamedType(dense_layout, param_shape)
                 # TODO they might be doing matmul weight reordering (figure 6 in their paper)
                 cmsis_dense_layout = 'IO'
                 cmsis_shape = shape.get_shape(cmsis_dense_layout)

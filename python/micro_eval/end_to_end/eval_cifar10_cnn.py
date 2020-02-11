@@ -16,7 +16,10 @@ from tvm.micro import create_micro_mod
 from tvm.relay.testing import resnet
 
 import micro_eval
-from micro_eval.util import gen_cifar10_cnn, relay_micro_build, eval_cpu_graph_runtime, eval_relay_intrp, reset_gdbinit, get_comm_overhead
+from micro_eval.util import (
+    relay_micro_build, eval_cpu_graph_runtime, eval_relay_intrp, reset_gdbinit, get_comm_overhead
+)
+from micro_eval.model.cifar10_cnn import gen_cifar10_cnn
 
 ###################
 # MODEL/DATA UTIL #
@@ -82,7 +85,7 @@ CMSIS_SRC_PATHS = [
 from collections import OrderedDict
 from tvm.micro.device.arm import stm32f746xx
 from tvm.micro.device.arm.stm32f746xx import MemConstraint
-TVM_DEV_CONFIG = stm32f746xx.default_config('127.0.0.1', 6668)
+TVM_DEV_CONFIG = stm32f746xx.default_config('127.0.0.1', 6666)
 TVM_DEV_CONFIG['mem_layout'] = stm32f746xx.gen_mem_layout(OrderedDict([
     #('text', (19000, MemConstraint.ABSOLUTE_BYTES)),
     ('text', (28000, MemConstraint.ABSOLUTE_BYTES)),
@@ -94,7 +97,7 @@ TVM_DEV_CONFIG['mem_layout'] = stm32f746xx.gen_mem_layout(OrderedDict([
     ('workspace', (132000, MemConstraint.ABSOLUTE_BYTES)),
     ('stack', (32, MemConstraint.ABSOLUTE_BYTES)),
     ]))
-CMSIS_DEV_CONFIG = stm32f746xx.default_config('127.0.0.1', 6668)
+CMSIS_DEV_CONFIG = stm32f746xx.default_config('127.0.0.1', 6666)
 CMSIS_DEV_CONFIG['mem_layout'] = stm32f746xx.gen_mem_layout(OrderedDict([
     #('text', (10000, MemConstraint.ABSOLUTE_BYTES)),
     ('text', (16000, MemConstraint.ABSOLUTE_BYTES)),
@@ -118,7 +121,7 @@ reset_gdbinit(TVM_DEV_CONFIG)
 ###############
 # Main Course #
 ###############
-CIFAR10_CLASSES = ["Plane", "Car", "Bird", "Cat", "Deer", "Dog", "Frog", "Horse", "Ship", "Truck"]
+CIFAR10_CLASSES = ['Plane', 'Car', 'Bird', 'Cat', 'Deer', 'Dog', 'Frog', 'Horse', 'Ship', 'Truck']
 NUM_SAMPLES = 10
 
 USE_TUNED_SCHEDULES = False
@@ -133,11 +136,11 @@ OUT_DTYPE = 'int8'
 
 def eval_cmsis(samples, time_overhead, cycle_overhead):
     # Begin a session
-    print("[Initting]")
+    print('[Initting]')
     # TODO probably need a different dev conf for cmsis
     with micro.Session(CMSIS_DEV_CONFIG) as sess:
         # Build the function
-        print("[Building]")
+        print('[Building]')
         micro_mod = create_micro_mod(
             CmsisCnnCMod(),
             CMSIS_DEV_CONFIG,
@@ -179,10 +182,10 @@ def eval_cmsis(samples, time_overhead, cycle_overhead):
 def eval_micro(samples, time_overhead, cycle_overhead):
     mod, params = gen_cifar10_cnn(USE_RANDOM_PARAMS)
     # Begin a session
-    print("[Initting]")
+    print('[Initting]')
     with micro.Session(TVM_DEV_CONFIG) as sess:
         # Build the function
-        print("[Building]")
+        print('[Building]')
         from tvm import autotvm
         DEVICE_ID = 'arm.stm32f746xx'
         E2E_LOG_FILE_NAME = f'{DEVICE_ID}.e2e.log'
@@ -208,7 +211,7 @@ def eval_micro(samples, time_overhead, cycle_overhead):
                 assert image_np.shape == tuple(map(lambda x: x.value, mod['main'].params[0].checked_type.shape))
 
                 # Execute with `image` as the input.
-                print("[Executing]")
+                print('[Executing]')
                 sess.get_last_batch_time()
                 sess.get_last_batch_cycles()
                 ctx = tvm.micro_dev(0)
@@ -230,7 +233,6 @@ def eval_micro(samples, time_overhead, cycle_overhead):
                 #break
 
 
-assert False, "merge conv2d simd_v0 tuning results with e2e simd results"
 time_overhead, cycle_overhead = get_comm_overhead(TVM_DEV_CONFIG)
 samples = get_sample_points(NUM_SAMPLES)
 #eval_cmsis(samples, time_overhead, cycle_overhead)
@@ -300,6 +302,7 @@ if micro_eval.util.DEBUG_MODE:
         input('========================================')
 
 
+assert False, "merge conv2d simd_v0 tuning results with e2e simd results"
 
 #if micro_eval.util.DEBUG_MODE:
 #    cpu_outputs = load_outputs('/home/lweber/microtvm-blogpost-eval/debug/cpu/_tvmdbg_ctx_CPU_0/output_tensors.params')

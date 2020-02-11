@@ -13,15 +13,6 @@ def conv2d_direct(
         compute_func, schedule_func,
         cfg,
         data, kernel, strides, padding, dilation, out_dtype):
-    # TODO (how should / should) we accomodate the code shape below? can we
-    # architect it so autotvm templates and regular schedules fall into the
-    # same structure?
-    #   cfg = autotvm.get_config()
-    #   conv = conv2d_arm_micro_nhwc(cfg, data, kernel, strides, padding, dilation, layout, out_dtype)
-    #   sched = schedule_conv2d_arm_micro_nhwc(cfg, [conv])
-    #
-    # could do `cfg=None` and `if cfg is None: cfg = autotvm.get_config()`
-    #
     data, kernel, conv = compute_func(cfg, data, kernel, strides, padding, dilation, out_dtype)
     sched = schedule_func(cfg, [data, kernel, conv])
     return sched, [data, kernel, conv]
@@ -31,6 +22,9 @@ def conv2d_direct(
 def conv2d_direct_nchw_compute(cfg, data, kernel, strides, padding, dilation, out_dtype):
     conv = conv2d_nchw(data, kernel, strides, padding, dilation, out_dtype)
 
+    ###########################
+    # Config Space Definition #
+    ###########################
     cfg.define_knob('auto_unroll_max_step', [0, 2, 4, 8, 16, 32])
     cfg.define_knob('unroll_explicit', [0, 1])
 
@@ -64,6 +58,9 @@ def conv2d_direct_nchw_schedule(cfg, outs):
 def conv2d_direct_nhwc_compute(cfg, data, kernel, strides, padding, dilation, out_dtype):
     conv = conv2d_nhwc(data, kernel, strides, padding, dilation, out_dtype)
 
+    ###########################
+    # Config Space Definition #
+    ###########################
     N, H, W, CI = get_const_tuple(data.shape)
     KH, KW, _, CO = get_const_tuple(kernel.shape)
     n, oh, ow, co = cfg.axis(N), cfg.axis(H), cfg.axis(W), cfg.axis(CO)
@@ -138,21 +135,3 @@ def conv2d_direct_nhwc_schedule(cfg, outs):
 
     traverse_inline(sched, outs[0].op, _callback)
     return sched
-
-
-# def default_conv2d(data_spec, kernel_spec, data_layout, strides, padding, dilation, out_dtype):
-#     data_typ, data_shape, data_dtype = data_spec
-#     kernel_typ, kernel_shape, kernel_dtype = kernel_spec
-#     assert data_typ == 'TENSOR'
-#     assert kernel_typ == 'TENSOR'
-#     data = tvm.placeholder(data_shape, name='data', dtype=data_dtype)
-#     kernel = tvm.placeholder(kernel_shape, name='kernel', dtype=kernel_dtype)
-
-#     if data_layout == 'NCHW':
-#     elif data_layout == 'NHWC':
-#         conv = conv2d_nhwc(data, kernel, strides, padding, dilation, out_dtype)
-#     else:
-#         assert False
-
-#     sched = tvm.create_schedule([conv.op])
-#     return sched, [data, kernel, conv]

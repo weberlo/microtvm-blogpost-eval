@@ -29,19 +29,13 @@ from tvm.relay import transform
 from tvm.relay import create_executor
 
 from micro_eval.util import (
+    CMSIS_PATH, CMSIS_INCLUDE_PATHS,
     MockCMod,
-    get_cmsis_path, get_cmsis_include_paths,
     relay_micro_build, reset_gdbinit, get_comm_overhead, benchmark_micro_func
 )
 
-assert False, 'merge with eval_conv2d.py'
-
-CMSIS_CONV_SRC_PATH = f'{os.path.dirname(__file__)}/../../src/cmsis_fast_conv2d.c'
-
-CMSIS_INCLUDE_PATHS = get_cmsis_include_paths()
-
-CMSIS_PATH = get_cmsis_path()
-CMSIS_LIB_SRC_PATHS = [
+CMSIS_CONV_SRC_PATH = f'{os.path.dirname(__file__)}/../../../cmsis_src/cmsis_fast_conv2d.c'
+CMSIS_SRC_PATHS = [
     f'{CMSIS_PATH}/CMSIS/NN/Source/NNSupportFunctions/arm_q7_to_q15_reordered_no_shift.c',
     f'{CMSIS_PATH}/CMSIS/NN/Source/ConvolutionFunctions/arm_convolve_HWC_q7_fast.c',
     f'{CMSIS_PATH}/CMSIS/NN/Source/ConvolutionFunctions/arm_nn_mat_mult_kernel_q7_q15_reordered.c'
@@ -99,9 +93,13 @@ def run_cmsis_conv2d(sess, time_overhead, cycle_overhead, data_np, kernel_np, bi
     bias_tvm = tvm.nd.array(bias_np, ctx=ctx)
     output_tvm = tvm.nd.array(np.zeros(CMSIS_OUTPUT_SHAPE, dtype=DTYPE), ctx=ctx)
 
-    batch_time, batch_cycles = benchmark_micro_func(sess, micro_func, [data_tvm, kernel_tvm, bias_tvm, output_tvm], NUM_TRIALS)
-    batch_time -= time_overhead
-    batch_cycles -= cycle_overhead
+    batch_time, batch_cycles = benchmark_micro_func(
+        sess, micro_func,
+        [data_tvm, kernel_tvm, bias_tvm, output_tvm],
+        NUM_TRIALS, time_overhead)
+    # batch_time -= time_overhead
+    # batch_cycles -= cycle_overhead
+    import pdb; pdb.set_trace()
 
     return output_tvm.asnumpy(), batch_time, batch_cycles
 
@@ -178,7 +176,8 @@ def main():
         # gen CMSIS tensors
         data_np = np.random.randint(-10, 10, size=CMSIS_DATA_SHAPE, dtype=DTYPE)
         kernel_np = np.random.randint(-3, 3, size=CMSIS_KERNEL_SHAPE, dtype=DTYPE)
-        bias_np = np.random.randint(-3, 3, size=CMSIS_BIAS_SHAPE, dtype=DTYPE)
+        # bias_np = np.random.randint(-3, 3, size=CMSIS_BIAS_SHAPE, dtype=DTYPE)
+        bias_np = np.zeros(CMSIS_BIAS_SHAPE, dtype=DTYPE)
 
         cmsis_output_np, cmsis_time, cmsis_cycles = run_cmsis_conv2d(sess, time_overhead, cycle_overhead, data_np, kernel_np, bias_np)
         assert np.sum(cmsis_output_np) != 0
@@ -327,7 +326,6 @@ def main():
 # [MicroTVM Speedup]
 # Cycles: 0.7551550416315879
 # Time: 0.7957825095601416
-
 
 if __name__ == "__main__":
     main()

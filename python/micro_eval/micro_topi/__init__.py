@@ -3,7 +3,7 @@ import inspect
 
 import tvm
 
-from micro_eval.util import NamedShape
+from micro_eval.util import NamedType, BakedType
 
 def op_decl(in_tensors=None):
     def _inner_decorator(orig_func):
@@ -29,19 +29,18 @@ def op_decl(in_tensors=None):
             new_args = []
             layout_dict = {}
             for arg, arg_name in zip(args, arg_names):
-                # replace shape + layout pairs with TVM placeholders
-                if isinstance(arg, tuple) and isinstance(arg[0], NamedShape):
-                    assert len(arg) == 2
-                    assert isinstance(arg[1], str), 'shape must be accompanied by layout'
+                # replace tensor types with TVM placeholders
+                assert not isinstance(arg, NamedType), 'shape must have a set layout'
+                if isinstance(arg, BakedType):
+                    shape = arg
                     assert arg_name in orig_func.input_tensors, f'unexpected input tensor `{arg_name}`'
-                    named_shape, layout = arg
-                    arg_typ, arg_shape, arg_dtype = named_shape.get_spec(layout)
+                    arg_typ, arg_shape, arg_dtype = shape.gen_spec()
                     assert arg_typ == 'TENSOR'
                     arg = tvm.placeholder(arg_shape, name=arg_name, dtype=arg_dtype)
-                    layout_dict[arg_name] = layout
+                    layout_dict[arg_name] = shape.layout
                 elif isinstance(arg, tuple) and arg[0] == 'TENSOR' and arg_name in in_tensors:
                     raise RuntimeError(
-                        f'arg `{arg_name} := {arg}` is already expanded to a spec. Must pass a (NamedShape, layout str) pair')
+                        f'arg `{arg_name} := {arg}` is already expanded to a spec. Must pass a (NamedType, layout str) pair')
                 new_args.append(arg)
 
             # dispatch to compute/schedule funcs that match the layout signature
@@ -59,7 +58,13 @@ def op_decl(in_tensors=None):
 
 
 def _gen_layout_signature(layout_dict, input_tensors):
-    assert len(layout_dict) == len(input_tensors)
+    if len(layout_dict) != len(input_tensors):
+        missing_tensors = []
+        for input_tensor in input_tensors:
+            if input_tensor not in layout_dict:
+                missing_tensors.append(input_tensor)
+        raise RuntimeError(f'missing the following input tensors: {missing_tensors}')
+
     layout_signature = []
     for name in input_tensors:
         assert name in layout_dict

@@ -12,14 +12,11 @@ def conv2d_direct_simd(
         compute_func, schedule_func,
         cfg,
         data, kernel, strides, padding, dilation, out_dtype):
-    # TODO (how should / should) we accomodate the code shape below? can we
-    # architect it so autotvm templates and regular schedules fall into the
+    # TODO how can we architect micro_topi so autotvm templates and regular schedules fall into the
     # same structure?
-    #   cfg = autotvm.get_config()
-    #   conv = conv2d_arm_micro_nhwc(cfg, data, kernel, strides, padding, dilation, layout, out_dtype)
-    #   sched = schedule_conv2d_arm_micro_nhwc(cfg, [conv])
+    #
+    # could do `cfg=None` and `if cfg is None: cfg = autotvm.get_config()`
     data, kernel, conv = compute_func(cfg, data, kernel, strides, padding, dilation, out_dtype)
-    # sched = schedule_conv2d_arm_micro_nhwc(cfg, [conv])
     sched = schedule_func(cfg, [data, kernel, conv])
     return sched, [data, kernel, conv]
 

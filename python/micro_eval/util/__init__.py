@@ -1,5 +1,7 @@
+from collections import Iterable
 import json
 import os
+from typing import *
 
 import numpy as np
 
@@ -30,56 +32,95 @@ CMSIS_INCLUDE_PATHS = [
     f'{CMSIS_PATH}/CMSIS/NN/Include'
 ]
 
-class NamedShape:
-    def __init__(self, *args, **shape_dict):
-        if len(args) == 1:
-            [dtype] = args
-            assert isinstance(dtype, str)
-            shape_iter = shape_dict.items()
-            self.dtype = dtype
-        elif len(args) == 2:
-            [layout, shape] = args
-            assert isinstance(layout, str)
-            assert isinstance(shape, tuple)
-            assert len(shape_dict) == 0, 'cannot provide both layout/shape args and layout/shape kwargs'
-            shape_iter = zip(layout, shape)
-        elif len(args) == 3:
-            [layout, shape, dtype] = args
-            assert isinstance(layout, str)
-            assert isinstance(shape, tuple)
-            assert isinstance(dtype, str)
-            assert len(shape_dict) == 0, 'cannot provide both layout/shape/dtype args and layout/shape kwargs'
-            shape_iter = zip(layout, shape)
-            self.dtype = dtype
-        elif len(shape_dict) != 0:
-            shape_iter = shape_dict.items()
-        else:
-            assert False
+class NamedTensor:
+    def __init__(self, data: np.ndarray, layout: str):
+        self.typ = BakedType(zip(layout, data.shape), dtype=str(data.dtype))
+        self.data = data
 
-        for dim_name, dim_size in shape_iter:
+    def with_layout(self, layout):
+        # def transform_data_layout(data_np, from_layout, to_layout):
+        indices = []
+        for dim in layout:
+            idx = self.typ.layout.index(dim)
+            assert idx != -1
+            indices.append(idx)
+        return NamedTensor(self.data.transpose(tuple(indices)), layout)
+
+
+class NamedType:
+    def __init__(self, layout_dict: Dict[str, int], dtype=None):
+        self.dim_names = []
+        for dim_name, dim_size in layout_dict.items():
             assert len(dim_name) == 1, 'dimension names must be single characters'
             setattr(self, dim_name, dim_size)
+            self.dim_names.append(dim_name)
+        if dtype is not None:
+            self._dtype = dtype
 
-    def get_shape(self, layout):
-        shape = []
+    def with_layout(self, layout):
+        layout_list = []
         for dim_name in layout:
-            assert hasattr(self, dim_name)
-            shape.append(getattr(self, dim_name))
-        return tuple(shape)
+            layout_list.append((dim_name, getattr(self, dim_name)))
+        return BakedType(layout_list, dtype=getattr(self, 'dtype', None))
 
-    def get_spec(self, layout):
-        """Create an AutoTVM style spec (e.g., `("TENSOR", (1, 2, 3), 'int8')`)."""
-        assert hasattr(self, 'dtype'), 'must specify dtype to generate a spec'
-        return ('TENSOR', self.get_shape(layout), self.dtype)
+    def gen_rand_tensor(self, low, high) -> NamedTensor:
+        # create a baked type with an arbitrary layout to use its random tensor generation method
+        return self.with_layout(''.join(self.dim_names)).gen_rand_tensor(low, high)
+
+    def gen_empty(self) -> NamedTensor:
+        # create a baked type with an arbitrary layout to use its empty tensor generation method
+        return self.with_layout(''.join(self.dim_names)).gen_zero_tensor()
+
+    @property
+    def dtype(self):
+        assert hasattr(self, '_dtype'), 'no dtype has been set'
+        return self._dtype
 
 
-def transform_data_layout(data_np, from_layout, to_layout):
-    indices = []
-    for dim in to_layout:
-        idx = from_layout.index(dim)
-        assert idx != -1
-        indices.append(idx)
-    return data_np.transpose(tuple(indices))
+class BakedType:
+    def __init__(self, layout_iter: Iterable[Tuple[str, int]], dtype=None):
+        layout = []
+        shape = []
+        assert isinstance(layout_iter, Iterable)
+        for dim_name, dim_size in layout_iter:
+            assert len(dim_name) == 1, 'dimension names must be single characters'
+            setattr(self, dim_name, dim_size)
+            layout.append(dim_name)
+            shape.append(dim_size)
+        self.layout = ''.join(layout)
+        self.shape = tuple(shape)
+        if dtype is not None:
+            self._dtype = dtype
+
+    def gen_spec(self):
+        """Create an AutoTVM style spec (e.g., `('TENSOR', (1, 2, 3), 'int8')`)."""
+        return ('TENSOR', self.shape, self.dtype)
+
+    def gen_rand_tensor(self, low, high) -> NamedTensor:
+        if 'int' in self.dtype:
+            data_np = np.random.randint(low, high, size=self.shape, dtype=self.dtype)
+        elif 'float' in self.dtype:
+            data_np = np.random.uniform(low, high, size=self.shape, dtype=self.dtype)
+        else:
+            assert False, 'unknown dtype'
+        return NamedTensor(data_np, self.layout)
+
+    def gen_zero_tensor(self) -> NamedTensor:
+        return NamedTensor(np.zeros(self.shape, dtype=self.dtype), self.layout)
+
+    @property
+    def dtype(self):
+        assert hasattr(self, '_dtype'), 'no dtype has been set'
+        return self._dtype
+
+
+# def transform_data_layout(data_np, from_layout, to_layout):
+#     indices = []
+#     for dim in to_layout:
+#         idx = from_layout.index(dim)
+#         assert idx != -1
+#         indices.append(idx)
+#     return data_np.transpose(tuple(indices))
 
 
 def get_axis_len(iter_var):
@@ -257,7 +298,7 @@ def get_comm_overhead(dev_config):
 
         def export_library(self, out_obj_path, fcompile=None):
             assert fcompile is not None
-            fcompile(out_obj_path, f'{os.path.dirname(__file__)}/../src/empty.c')
+            fcompile(out_obj_path, f'{os.path.dirname(__file__)}/empty.c')
 
     with micro.Session(dev_config) as sess:
         micro_mod = create_micro_mod(EmptyCMod(), dev_config)
@@ -273,7 +314,7 @@ def get_comm_overhead(dev_config):
         return exec_time, exec_cycles
 
 
-def benchmark_micro_func(sess, micro_func, args, num_trials):
+def benchmark_micro_func(sess, micro_func, args, num_trials, time_overhead):
     ctx = tvm.micro_dev(0)
     # sync before and after to ensure these are the only tasks in the queue
     ctx.sync()
@@ -282,7 +323,7 @@ def benchmark_micro_func(sess, micro_func, args, num_trials):
     for _ in range(num_trials):
         micro_func(*args)
     ctx.sync()
-    return sess.get_last_batch_time(), sess.get_last_batch_cycles()
+    return sess.get_last_batch_time() - time_overhead, sess.get_last_batch_cycles()
 
 
 class MockCMod:
@@ -294,10 +335,12 @@ class MockCMod:
         fcompile(out_obj_path, self.src_path)
 
 
-def check_conv2d_output(data_np, kernel_np, micro_output_np, data_layout, kernel_layout, strides, padding):
-    data_nchw_np = transform_data_layout(data_np, data_layout, 'NCHW')
-    kernel_oihw_np = transform_data_layout(kernel_np, kernel_layout, 'OIHW')
-    micro_output_nchw_np = transform_data_layout(micro_output_np, data_layout, 'NCHW')
+def check_conv2d_output(
+        data_nt: NamedTensor, kernel_nt: NamedTensor, micro_output_nt: NamedTensor,
+        strides, padding):
+    data_nchw_np = data_nt.with_layout('NCHW').data
+    kernel_oihw_np = kernel_nt.with_layout('OIHW').data
+    micro_output_nchw_np = micro_output_nt.with_layout('NCHW').data
 
     topi_output_np = conv2d_nchw_python(data_nchw_np, kernel_oihw_np, strides, padding)
     tvm.testing.assert_allclose(micro_output_nchw_np, topi_output_np)

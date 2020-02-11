@@ -42,16 +42,16 @@ from topi.nn.util import get_pad_tuple
 from topi.util import simplify, get_const_tuple, traverse_inline
 
 from micro_eval.util import (
-    CMSIS_INCLUDE_PATHS,
-    NamedShape,
-    transform_data_layout,
+    CMSIS_PATH, CMSIS_INCLUDE_PATHS,
+    MockCMod,
+    NamedTensor, NamedType, BakedType,
     print_c_source,
     relay_micro_build, reset_gdbinit,
     get_comm_overhead, benchmark_micro_func,
     check_conv2d_output
 )
 from micro_eval.micro_topi.cortex_m7.micro_kernel.gemm import (
-        intrin_gemm_MxKxN, gemm_MxKxN_impl,
+    intrin_gemm_MxKxN, gemm_MxKxN_impl
 )
 from micro_eval.micro_topi.cortex_m7.conv2d.direct import conv2d_direct
 from micro_eval.micro_topi.cortex_m7.conv2d.direct_simd import conv2d_direct_simd
@@ -85,17 +85,26 @@ TIME_OVERHEAD, CYCLE_OVERHEAD = 0.0, 0
 ###############
 # CONV CONFIG #
 ###############
-#N, H, W, CO, CI = 1, 16, 16, 32, 32
-N, H, W, CO, CI = 1, 4, 4, 4, 4
+# N, H, W, CO, CI = 1, 16, 16, 32, 32
+# KH, KW = 5, 5
+# STRIDES, PADDING, DILATION = (1, 1), 2, 1
+N, H, W, CO, CI = 1, 8, 8, 4, 4
 KH, KW = 3, 3
 STRIDES, PADDING, DILATION = (1, 1), 1, 1
 IN_DTYPE = 'int8'
 OUT_DTYPE = 'int32'
 
-DATA_SHAPE = NamedShape(IN_DTYPE, N=N, C=CI, H=H, W=W)
-KERNEL_SHAPE = NamedShape(IN_DTYPE, H=KH, W=KW, I=CI, O=CO)
-OUTPUT_SHAPE = NamedShape(IN_DTYPE, N=N, C=CO, H=H, W=W)
-BIAS_SHAPE = (CO,)
+DATA_TYPE = NamedType(dict(N=N, C=CI, H=H, W=W), dtype=IN_DTYPE)
+KERNEL_TYPE = NamedType(dict(H=KH, W=KW, I=CI, O=CO), dtype=IN_DTYPE)
+OUT_TYPE = NamedType(dict(N=N, C=CO, H=H, W=W), dtype=OUT_DTYPE)
+
+# CMSIS out dtype is the same as in dtype
+CMSIS_OUT_TYPE = NamedType(dict(N=N, C=CO, H=H, W=W), dtype=IN_DTYPE)
+CMSIS_BIAS_LSHIFT = 0
+# CMSIS_OUT_RSHIFT = 9  # original param
+CMSIS_OUT_RSHIFT = 6
+
+BIAS_TYPE = BakedType([('B', CO)], dtype=IN_DTYPE)
 
 ################
 # TRIAL CONFIG #
@@ -107,46 +116,116 @@ NUM_BATCH_SIZE_CANDIDATES = 5
 # EVALUATION #
 ##############
 
-def eval_micro(sess, sched, arg_bufs, data_layout, kernel_layout):
-    [data, kernel, conv] = arg_bufs
-    c_mod = tvm.build(sched, arg_bufs, target=TARGET, name='conv2d')
+def eval_micro(
+        sess, c_mod,
+        data_nt: NamedTensor,
+        kernel_nt: NamedTensor,
+        out_type: BakedType,
+        lib_src_paths=None):
+    # data_np = np.random.randint(-10, 10, size=data_type.shape, dtype=data_type.dtype)
+    # kernel_np = np.random.randint(-3, 3, size=kernel_type.shape, dtype=kernel_type.dtype)
 
-    data_np = np.random.randint(-10, 10, size=get_const_tuple(data.shape), dtype=data.dtype)
-    kernel_np = np.random.randint(-3, 3, size=get_const_tuple(kernel.shape), dtype=kernel.dtype)
-
-    micro_mod = create_micro_mod(c_mod, DEV_CONFIG, lib_include_paths=CMSIS_INCLUDE_PATHS)
+    micro_mod = create_micro_mod(
+        c_mod, DEV_CONFIG, lib_src_paths=lib_src_paths, lib_include_paths=CMSIS_INCLUDE_PATHS)
     micro_func = micro_mod['conv2d']
     ctx = tvm.micro_dev(0)
 
-    data_tvm = tvm.nd.array(data_np, ctx=ctx)
-    kernel_tvm = tvm.nd.array(kernel_np, ctx=ctx)
-    output_tvm = tvm.nd.array(np.zeros(get_const_tuple(conv.shape), dtype=conv.dtype), ctx=ctx)
+    data_tvm = tvm.nd.array(data_nt.data, ctx=ctx)
+    kernel_tvm = tvm.nd.array(kernel_nt.data, ctx=ctx)
+    output_tvm = tvm.nd.array(np.zeros(out_type.shape, dtype=out_type.dtype), ctx=ctx)
 
-    batch_time, _ = benchmark_micro_func(sess, micro_func, [data_tvm, kernel_tvm, output_tvm], 10)
+    batch_time, _ = benchmark_micro_func(
+        sess, micro_func,
+        [data_tvm, kernel_tvm, output_tvm],
+        NUM_TRIALS, TIME_OVERHEAD)
 
-    micro_output_np = output_tvm.asnumpy()
-    assert np.sum(micro_output_np) != 0
+    output_np = output_tvm.asnumpy()
+    assert np.sum(output_np) != 0
 
     print('checking result against topi oracle...')
-    check_conv2d_output(data_np, kernel_np, micro_output_np, data_layout, kernel_layout, STRIDES, PADDING)
+    check_conv2d_output(
+        data_nt,
+        kernel_nt,
+        NamedTensor(output_np, out_type.layout),
+        STRIDES, PADDING)
+
+    return batch_time - TIME_OVERHEAD
+
+
+# def eval_cmsis(sess, data_np, kernel_np, bias_np):
+def eval_cmsis(sess, data_nt, kernel_nt, out_type):
+    DATA_LAYOUT = 'NHWC'
+    KERNEL_LAYOUT = 'IHWO'
+    data_nt = data_nt.with_layout(DATA_LAYOUT)
+    kernel_nt = kernel_nt.with_layout(KERNEL_LAYOUT)
+    out_type = out_type.with_layout(DATA_LAYOUT)
+
+    CMSIS_CONV_SRC_PATH = f'{os.path.dirname(__file__)}/../../../cmsis_src/cmsis_fast_conv2d.c'
+    CMSIS_SRC_PATHS = [
+        f'{CMSIS_PATH}/CMSIS/NN/Source/NNSupportFunctions/arm_q7_to_q15_reordered_no_shift.c',
+        f'{CMSIS_PATH}/CMSIS/NN/Source/ConvolutionFunctions/arm_convolve_HWC_q7_fast.c',
+        f'{CMSIS_PATH}/CMSIS/NN/Source/ConvolutionFunctions/arm_nn_mat_mult_kernel_q7_q15_reordered.c'
+    ]
+
+    # data_np = np.random.randint(-10, 10, size=data_type.shape, dtype=data_type.dtype)
+    # kernel_np = np.random.randint(-3, 3, size=kernel_type.shape, dtype=kernel_type.dtype)
+    # bias_np = np.random.randint(-3, 3, size=BIAS_TYPE.shape, dtype=BIAS_TYPE.dtype)
+    bias_nt = BIAS_TYPE.gen_zero_tensor()
+    metadata_np = np.array(
+        [PADDING, STRIDES[0], CMSIS_BIAS_LSHIFT, CMSIS_OUT_RSHIFT],
+        dtype=np.uint16)
+    out_nt = out_type.gen_zero_tensor()
+
+    micro_mod = create_micro_mod(
+        MockCMod(CMSIS_CONV_SRC_PATH),
+        DEV_CONFIG,
+        lib_src_paths=CMSIS_SRC_PATHS,
+        lib_include_paths=CMSIS_INCLUDE_PATHS)
+    micro_func = micro_mod['arm_fast_conv2d_wrapper']
+    ctx = tvm.micro_dev(0)
+
+    data_tvm = tvm.nd.array(data_nt.data, ctx=ctx)
+    kernel_tvm = tvm.nd.array(kernel_nt.data, ctx=ctx)
+    bias_tvm = tvm.nd.array(bias_nt.data, ctx=ctx)
+    metadata_tvm = tvm.nd.array(metadata_np, ctx=ctx)
+    output_tvm = tvm.nd.array(out_nt.data, ctx=ctx)
+
+    batch_time, _ = benchmark_micro_func(
+        sess, micro_func,
+        [data_tvm, kernel_tvm, bias_tvm, metadata_tvm, output_tvm],
+        NUM_TRIALS, TIME_OVERHEAD)
+    output_np = output_tvm.asnumpy()
+
+    # TODO not sure how to interpret their output...
+    # print('checking result against topi oracle...')
+    # check_conv2d_output(
+    #     NamedTensor(data_np, data_type.layout),
+    #     NamedTensor(kernel_np, kernel_type.layout),
+    #     NamedTensor(output_np, out_type.layout),
+    #     STRIDES, PADDING)
+    assert output_np.sum() != 0
 
     return batch_time
 
 
-def eval_direct(sess):
+def eval_direct(sess, data_nt, kernel_nt):
     results = []
     for data_layout, kernel_layout in [('NCHW', 'OIHW'), ('NHWC', 'HWIO')]:
+        data_nt = data_nt.with_layout(data_layout)
+        kernel_nt = kernel_nt.with_layout(kernel_layout)
+        out_type = OUT_TYPE.with_layout(data_layout)
         sched, arg_bufs = conv2d_direct(
                 FallbackConfigEntity(),
-                (DATA_SHAPE, data_layout), (KERNEL_SHAPE, kernel_layout),
-                STRIDES, PADDING, DILATION, OUT_DTYPE)
-        time = eval_micro(sess, sched, arg_bufs, data_layout, kernel_layout)
+                data_nt.typ, kernel_nt.typ,
+                STRIDES, PADDING, DILATION, out_type.dtype)
+        c_mod = tvm.build(sched, arg_bufs, target=TARGET, name='conv2d')
+        time = eval_micro(sess, c_mod, data_nt, kernel_nt, out_type)
         time -= TIME_OVERHEAD
         results.append(((data_layout, kernel_layout), time))
     return results
 
 
-def eval_direct_simd(sess):
+def eval_direct_simd(sess, data_nt, kernel_nt):
     results = []
     def gen_direct_simd_cfg(M, K, N):
         cfg = FallbackConfigEntity()
@@ -166,31 +245,42 @@ def eval_direct_simd(sess):
         cfg['unroll_explicit'] = OtherOptionEntity(0)
         return cfg
 
-    for microkernel_shape in [(1, 4, 1), (2, 4, 2), (4, 4, 4)]:
+    DATA_LAYOUT = 'NHWC'
+    KERNEL_LAYOUT = 'HWOI'
+    data_nt = data_nt.with_layout(DATA_LAYOUT)
+    kernel_nt = kernel_nt.with_layout(KERNEL_LAYOUT)
+    out_type = OUT_TYPE.with_layout(DATA_LAYOUT)
+    for microkernel_type in [(1, 4, 1), (2, 4, 2), (4, 4, 4)]:
         sched, arg_bufs = conv2d_direct_simd(
-            gen_direct_simd_cfg(*microkernel_shape),
-            (DATA_SHAPE, 'NHWC'), (KERNEL_SHAPE, 'HWOI'),
+            gen_direct_simd_cfg(*microkernel_type),
+            data_nt.typ, kernel_nt.typ,
             STRIDES, PADDING, DILATION, OUT_DTYPE)
-        time = eval_micro(sess, sched, arg_bufs, 'NHWC', 'HWOI')
+        c_mod = tvm.build(sched, arg_bufs, target=TARGET, name='conv2d')
+        time = eval_micro(sess, c_mod, data_nt, kernel_nt, out_type)
         time -= TIME_OVERHEAD
-        results.append((microkernel_shape, time))
+        results.append((microkernel_type, time))
     return results
 
 
-def eval_partial_im2col_simd(sess):
+def eval_partial_im2col_simd(sess, data_nt, kernel_nt):
     results = []
     max_batch_size = H * W
     # try factors of the max batch size
     batch_sizes = [i for i in range(1, max_batch_size+1) if max_batch_size % i == 0]
     if len(batch_sizes) > NUM_BATCH_SIZE_CANDIDATES:
         batch_sizes = batch_sizes[-NUM_BATCH_SIZE_CANDIDATES:]
+    DATA_LAYOUT = 'NHWC'
+    KERNEL_LAYOUT = 'OIHW'
+    data_nt = data_nt.with_layout(DATA_LAYOUT)
+    kernel_nt = kernel_nt.with_layout(KERNEL_LAYOUT)
+    out_type = OUT_TYPE.with_layout(DATA_LAYOUT)
     for i2c_batch_size in batch_sizes:
         sched, arg_bufs = conv2d_partial_im2col(
-                (DATA_SHAPE, 'NHWC'), (KERNEL_SHAPE, 'OIHW'),
+                data_nt.typ, kernel_nt.typ,
                 STRIDES, PADDING, OUT_DTYPE,
                 i2c_batch_size)
-        print_c_source(sched, arg_bufs)
-        time = eval_micro(sess, sched, arg_bufs, 'NHWC', 'OIHW')
+        c_mod = tvm.build(sched, arg_bufs, target=TARGET, name='conv2d')
+        time = eval_micro(sess, c_mod, data_nt, kernel_nt, out_type)
         time -= TIME_OVERHEAD
         results.append((i2c_batch_size, time))
     return results
@@ -199,13 +289,23 @@ def eval_partial_im2col_simd(sess):
 def main():
     reset_gdbinit(DEV_CONFIG)
 
+    data_nt = DATA_TYPE.gen_rand_tensor(-10, 10)
+    kernel_nt = KERNEL_TYPE.gen_rand_tensor(-3, 3)
     with micro.Session(DEV_CONFIG) as sess:
+        # CMSIS-NN
+        cmsis_results = eval_cmsis(sess, data_nt, kernel_nt, CMSIS_OUT_TYPE)
         # direct w/o SIMD
-        default_results = eval_direct(sess)
+        default_results = eval_direct(sess, data_nt, kernel_nt)
         # direct w/ SIMD
-        direct_simd_results = eval_direct_simd(sess)
+        direct_simd_results = eval_direct_simd(sess, data_nt, kernel_nt)
         # partial im2col w/ SIMD
-        partial_im2col_simd_results = eval_partial_im2col_simd(sess)
+        partial_im2col_simd_results = eval_partial_im2col_simd(sess, data_nt, kernel_nt)
+
+        print('############')
+        print('# CMSIS-NN #')
+        print('############')
+        print(cmsis_results)
+        print()
 
         [default_nchw_time, default_nhwc_time] = default_results
         print()

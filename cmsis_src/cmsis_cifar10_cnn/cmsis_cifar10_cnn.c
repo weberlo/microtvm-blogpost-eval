@@ -29,15 +29,17 @@ void mean_subtract(q7_t* image_data) {
 }
 
 int32_t run_nn(q7_t* input_data, q7_t* output_data) {
+  // NOTE: the op that needs the largest col_buffer is the last average pool (2
+  // * 64 * 5 * 5 * sizeof(q15_t))
   void* col_buffer = TVMBackendAllocWorkspace(1, 0, (uint64_t) 6400, 2, 8);
   if (col_buffer == NULL) {
     return -1;
   }
-  void* buffer1 = TVMBackendAllocWorkspace(1, 0, (uint64_t) 8192, 2, 8);
+  void* buffer1 = TVMBackendAllocWorkspace(1, 0, (uint64_t) 32768, 2, 8);
   if (buffer1 == NULL) {
     return -1;
   }
-  void* buffer2 = TVMBackendAllocWorkspace(1, 0, (uint64_t) 32768, 2, 8);
+  void* buffer2 = TVMBackendAllocWorkspace(1, 0, (uint64_t) 8192, 2, 8);
   if (buffer2 == NULL) {
     return -1;
   }
