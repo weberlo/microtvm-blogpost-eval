@@ -2,8 +2,12 @@ import functools
 import inspect
 
 import tvm
+from tvm.autotvm.task.topi_integration import TaskExtractEnv
 
 from micro_eval.util import NamedType, BakedType
+
+# init autotvm env to register uTVM ops
+TaskExtractEnv()
 
 def op_decl(in_tensors=None):
     def _inner_decorator(orig_func):
@@ -91,3 +95,13 @@ def register_compute(base_op_func, **layouts):
 # TODO automatically generate a `_callback` and call `traverse_inline` for scheds
 def register_schedule(base_op_func, **layouts):
     return _register_layout('schedule', base_op_func, **layouts)
+
+
+def register_dev_tuning_tasks():
+   autotvm.register_topi_compute(
+           conv2d_arm_micro_nchw, 'micro_dev', ['direct'])
+   autotvm.register_topi_schedule(
+           schedule_conv2d_arm_micro_nchw, 'micro_dev', ['direct'])
+
+   #autotvm.template(conv2d_arm_micro_nchw_template)
+   autotvm.task.register(conv2d_arm_micro_nchw_template, "topi_nn_conv2d", override=True)

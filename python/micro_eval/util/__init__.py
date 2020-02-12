@@ -38,7 +38,6 @@ class NamedTensor:
         self.data = data
 
     def with_layout(self, layout):
-        # def transform_data_layout(data_np, from_layout, to_layout):
         indices = []
         for dim in layout:
             idx = self.typ.layout.index(dim)
@@ -61,7 +60,7 @@ class NamedType:
         layout_list = []
         for dim_name in layout:
             layout_list.append((dim_name, getattr(self, dim_name)))
-        return BakedType(layout_list, dtype=getattr(self, 'dtype', None))
+        return BakedType(layout_list, dtype=getattr(self, '_dtype', None))
 
     def gen_rand_tensor(self, low, high) -> NamedTensor:
         # create a baked type with an arbitrary layout to use its random tensor generation method
@@ -164,11 +163,11 @@ def relay_micro_build(func, dev_config, target, params=None, lib_include_paths=N
         graph runtime module for the target device
 
     """
-    #with relay.build_config(opt_level=3, disabled_pass={"AlterOpLayout"}):
-    #    with tvm.build_config(disable_vectorize=True):
-    #        graph, c_mod, params = relay.build(func, target=target, params=params)
-    with relay.build_config(opt_level=3):
-        graph, c_mod, params = relay.build(func, target=target, params=params)
+    with relay.build_config(opt_level=3, disabled_pass={"AlterOpLayout"}):
+       with tvm.build_config(disable_vectorize=True):
+           graph, c_mod, params = relay.build(func, target=target, params=params)
+    # with relay.build_config(opt_level=3):
+    #     graph, c_mod, params = relay.build(func, target=target, params=params)
     input(c_mod.get_source())
     micro_mod = micro.create_micro_mod(c_mod, dev_config, lib_include_paths=lib_include_paths)
     ctx = tvm.micro_dev(0)
@@ -323,7 +322,7 @@ def benchmark_micro_func(sess, micro_func, args, num_trials, time_overhead):
     for _ in range(num_trials):
         micro_func(*args)
     ctx.sync()
-    return sess.get_last_batch_time() - time_overhead, sess.get_last_batch_cycles()
+    return (sess.get_last_batch_time() / num_trials) - time_overhead, sess.get_last_batch_cycles()
 
 
 class MockCMod:

@@ -85,12 +85,12 @@ TIME_OVERHEAD, CYCLE_OVERHEAD = 0.0, 0
 ###############
 # CONV CONFIG #
 ###############
-# N, H, W, CO, CI = 1, 16, 16, 32, 32
-# KH, KW = 5, 5
-# STRIDES, PADDING, DILATION = (1, 1), 2, 1
-N, H, W, CO, CI = 1, 8, 8, 4, 4
-KH, KW = 3, 3
-STRIDES, PADDING, DILATION = (1, 1), 1, 1
+N, H, W, CO, CI = 1, 16, 16, 32, 32
+KH, KW = 5, 5
+STRIDES, PADDING, DILATION = (1, 1), 2, 1
+# N, H, W, CO, CI = 1, 8, 8, 4, 4
+# KH, KW = 3, 3
+# STRIDES, PADDING, DILATION = (1, 1), 1, 1
 IN_DTYPE = 'int8'
 OUT_DTYPE = 'int32'
 
@@ -101,8 +101,8 @@ OUT_TYPE = NamedType(dict(N=N, C=CO, H=H, W=W), dtype=OUT_DTYPE)
 # CMSIS out dtype is the same as in dtype
 CMSIS_OUT_TYPE = NamedType(dict(N=N, C=CO, H=H, W=W), dtype=IN_DTYPE)
 CMSIS_BIAS_LSHIFT = 0
-# CMSIS_OUT_RSHIFT = 9  # original param
-CMSIS_OUT_RSHIFT = 6
+CMSIS_OUT_RSHIFT = 9  # original param
+# CMSIS_OUT_RSHIFT = 6
 
 BIAS_TYPE = BakedType([('B', CO)], dtype=IN_DTYPE)
 
@@ -110,6 +110,7 @@ BIAS_TYPE = BakedType([('B', CO)], dtype=IN_DTYPE)
 # TRIAL CONFIG #
 ################
 NUM_TRIALS = 15
+# NUM_TRIALS = 1
 NUM_BATCH_SIZE_CANDIDATES = 5
 
 ##############
@@ -149,7 +150,7 @@ def eval_micro(
         NamedTensor(output_np, out_type.layout),
         STRIDES, PADDING)
 
-    return batch_time - TIME_OVERHEAD
+    return batch_time
 
 
 # def eval_cmsis(sess, data_np, kernel_np, bias_np):
@@ -171,6 +172,7 @@ def eval_cmsis(sess, data_nt, kernel_nt, out_type):
     # kernel_np = np.random.randint(-3, 3, size=kernel_type.shape, dtype=kernel_type.dtype)
     # bias_np = np.random.randint(-3, 3, size=BIAS_TYPE.shape, dtype=BIAS_TYPE.dtype)
     bias_nt = BIAS_TYPE.gen_zero_tensor()
+    # encode conv params in a tensor
     metadata_np = np.array(
         [PADDING, STRIDES[0], CMSIS_BIAS_LSHIFT, CMSIS_OUT_RSHIFT],
         dtype=np.uint16)
@@ -225,15 +227,24 @@ def eval_direct(sess, data_nt, kernel_nt):
     return results
 
 
-def eval_direct_simd(sess, data_nt, kernel_nt):
-    results = []
-    def gen_direct_simd_cfg(M, K, N):
+class DirectSimdFallback(autotvm.FallbackContext):
+    def __init__(self, M, K, N):
+        super(DirectSimdFallback, self).__init__()
+        self.M = M
+        self.K = K
+        self.N = N
+
+    def _query_inside(self, target, workload):
+        key = (target, workload)
+        import pdb; pdb.set_trace()
+        if key in self.memory:
+            return self.memory[key]
         cfg = FallbackConfigEntity()
         cfg.template_key = 'direct_simd'
         cfg.is_fallback = False
-        cfg['tile_ow'] = SplitEntity([-1, M])
-        cfg['tile_ci'] = SplitEntity([-1, K])
-        cfg['tile_co'] = SplitEntity([-1, N])
+        cfg['tile_ow'] = SplitEntity([-1, self.M])
+        cfg['tile_ci'] = SplitEntity([-1, self.K])
+        cfg['tile_co'] = SplitEntity([-1, self.N])
         # TODO we shouldn't need to mirror the order of the axes
         # specified in the config space definition to mock a reordering
         # here
@@ -243,19 +254,48 @@ def eval_direct_simd(sess, data_nt, kernel_nt):
             [reorder_base.index(axis) for axis in reorder_target])
         cfg['auto_unroll_max_step'] = OtherOptionEntity(0)
         cfg['unroll_explicit'] = OtherOptionEntity(0)
+        self.memory[key] = cfg
         return cfg
+
+
+def eval_direct_simd(sess, data_nt, kernel_nt):
+    results = []
+    # def gen_direct_simd_cfg(M, K, N):
+    #     cfg = FallbackConfigEntity()
+    #     cfg.template_key = 'direct_simd'
+    #     cfg.is_fallback = False
+    #     cfg['tile_ow'] = SplitEntity([-1, M])
+    #     cfg['tile_ci'] = SplitEntity([-1, K])
+    #     cfg['tile_co'] = SplitEntity([-1, N])
+    #     # TODO we shouldn't need to mirror the order of the axes
+    #     # specified in the config space definition to mock a reordering
+    #     # here
+    #     reorder_base = ['n', 'oh', 'owo', 'owi', 'coo', 'coi', 'kh', 'kw', 'cio', 'cii']
+    #     reorder_target = ['n', 'oh', 'kh', 'kw', 'owo', 'coo', 'cio', 'owi', 'coi', 'cii']
+    #     cfg['reorder_0_simd'] = ReorderEntity(
+    #         [reorder_base.index(axis) for axis in reorder_target])
+    #     cfg['auto_unroll_max_step'] = OtherOptionEntity(0)
+    #     cfg['unroll_explicit'] = OtherOptionEntity(0)
+    #     return cfg
 
     DATA_LAYOUT = 'NHWC'
     KERNEL_LAYOUT = 'HWOI'
+
     data_nt = data_nt.with_layout(DATA_LAYOUT)
     kernel_nt = kernel_nt.with_layout(KERNEL_LAYOUT)
     out_type = OUT_TYPE.with_layout(DATA_LAYOUT)
-    for microkernel_type in [(1, 4, 1), (2, 4, 2), (4, 4, 4)]:
-        sched, arg_bufs = conv2d_direct_simd(
-            gen_direct_simd_cfg(*microkernel_type),
-            data_nt.typ, kernel_nt.typ,
-            STRIDES, PADDING, DILATION, OUT_DTYPE)
+    # TODO autogen candidates?
+    # for microkernel_type in [(1, 4, 1), (2, 4, 2), (4, 4, 4)]:
+    for (M, K, N) in [(W // 4, CI // 4, CO // 4), (W // 2, CI // 2, CO // 2), (W, CI, CO)]:
+        # import pdb; pdb.set_trace()
+        # sched_cfg = gen_direct_simd_cfg(*microkernel_type)
+        with DirectSimdFallback(M, K, N):
+            with TARGET:
+                sched, arg_bufs = conv2d_direct_simd(
+                    data_nt.typ, kernel_nt.typ,
+                    STRIDES, PADDING, DILATION, OUT_DTYPE)
         c_mod = tvm.build(sched, arg_bufs, target=TARGET, name='conv2d')
+        input(c_mod.get_source())
         time = eval_micro(sess, c_mod, data_nt, kernel_nt, out_type)
         time -= TIME_OVERHEAD
         results.append((microkernel_type, time))
@@ -265,10 +305,11 @@ def eval_direct_simd(sess, data_nt, kernel_nt):
 def eval_partial_im2col_simd(sess, data_nt, kernel_nt):
     results = []
     max_batch_size = H * W
-    # try factors of the max batch size
+    # use the first NUM_BATCH_SIZE_CANDIDATES factors of the max batch size
     batch_sizes = [i for i in range(1, max_batch_size+1) if max_batch_size % i == 0]
     if len(batch_sizes) > NUM_BATCH_SIZE_CANDIDATES:
-        batch_sizes = batch_sizes[-NUM_BATCH_SIZE_CANDIDATES:]
+        batch_sizes = batch_sizes[:NUM_BATCH_SIZE_CANDIDATES]
+
     DATA_LAYOUT = 'NHWC'
     KERNEL_LAYOUT = 'OIHW'
     data_nt = data_nt.with_layout(DATA_LAYOUT)
@@ -292,14 +333,18 @@ def main():
     data_nt = DATA_TYPE.gen_rand_tensor(-10, 10)
     kernel_nt = KERNEL_TYPE.gen_rand_tensor(-3, 3)
     with micro.Session(DEV_CONFIG) as sess:
-        # CMSIS-NN
-        cmsis_results = eval_cmsis(sess, data_nt, kernel_nt, CMSIS_OUT_TYPE)
-        # direct w/o SIMD
-        default_results = eval_direct(sess, data_nt, kernel_nt)
+        # # CMSIS-NN
+        # cmsis_results = eval_cmsis(sess, data_nt, kernel_nt, CMSIS_OUT_TYPE)
+        # # direct w/o SIMD
+        # default_results = eval_direct(sess, data_nt, kernel_nt)
         # direct w/ SIMD
         direct_simd_results = eval_direct_simd(sess, data_nt, kernel_nt)
-        # partial im2col w/ SIMD
-        partial_im2col_simd_results = eval_partial_im2col_simd(sess, data_nt, kernel_nt)
+        # # partial im2col w/ SIMD
+        # partial_im2col_simd_results = eval_partial_im2col_simd(sess, data_nt, kernel_nt)
+
+        # TODO write function that gives a 2d heatmap of mismatches (showing
+        # percentage of entries that don't match) by choosing two view axes and
+        # reducing other axes
 
         print('############')
         print('# CMSIS-NN #')
@@ -307,14 +352,14 @@ def main():
         print(cmsis_results)
         print()
 
-        [default_nchw_time, default_nhwc_time] = default_results
-        print()
-        print('###########')
-        print('# DEFAULT #')
-        print('###########')
-        print(f'  NCHW time: {default_nchw_time}')
-        print(f'  NHWC time: {default_nhwc_time}')
-        print()
+        # [default_nchw_time, default_nhwc_time] = default_results
+        # print()
+        # print('###########')
+        # print('# DEFAULT #')
+        # print('###########')
+        # print(f'  NCHW time: {default_nchw_time}')
+        # print(f'  NHWC time: {default_nhwc_time}')
+        # print()
 
         [small_direct_simd_time, medium_direct_simd_time, large_direct_simd_time] = direct_simd_results
         print('######################')
@@ -325,12 +370,12 @@ def main():
         print(f'  large time: {large_direct_simd_time}')
         print()
 
-        print('######################')
-        print('# IM2COL CONV + SIMD #')
-        print('######################')
-        for (batch_size, i2c_simd_time) in partial_im2col_simd_results:
-            print(f'  batch of {batch_size} time: {i2c_simd_time}')
-        print()
+        # print('######################')
+        # print('# IM2COL CONV + SIMD #')
+        # print('######################')
+        # for (batch_size, i2c_simd_time) in partial_im2col_simd_results:
+        #     print(f'  batch of {batch_size} time: {i2c_simd_time}')
+        # print()
 
 
 if __name__ == "__main__":

@@ -15,10 +15,12 @@ import tvm.micro as micro
 from tvm.micro import create_micro_mod
 from tvm.relay.testing import resnet
 
-import micro_eval
 from micro_eval.util import (
     relay_micro_build, eval_cpu_graph_runtime, eval_relay_intrp, reset_gdbinit, get_comm_overhead
 )
+import micro_eval.micro_topi.cortex_m7.conv2d.direct
+import micro_eval.micro_topi.cortex_m7.conv2d.direct_simd
+import micro_eval.micro_topi.cortex_m7.conv2d.partial_im2col
 from micro_eval.model.cifar10_cnn import gen_cifar10_cnn
 
 ###################
@@ -118,16 +120,19 @@ TARGET = tvm.target.create('c -device=micro_dev')
 reset_gdbinit(TVM_DEV_CONFIG)
 
 
-###############
-# Main Course #
-###############
+##############
+# EVALUATION #
+##############
 CIFAR10_CLASSES = ['Plane', 'Car', 'Bird', 'Cat', 'Deer', 'Dog', 'Frog', 'Horse', 'Ship', 'Truck']
 NUM_SAMPLES = 10
 
-USE_TUNED_SCHEDULES = False
-USE_RANDOM_PARAMS = False
+USE_TUNED_SCHEDULES = True
+USE_RANDOM_PARAMS = True
 
 TVM_DATA_LAYOUT = 'NCHW'
+# TVM_KERNEL_LAYOUT = 'HWOI'
+TVM_KERNEL_LAYOUT = 'OIHW'
+
 CMSIS_DATA_LAYOUT = 'NHWC'
 CMSIS_DATA_SHAPE = (1, 32, 32, 3)
 CMSIS_OUTPUT_SHAPE = (10,)
@@ -179,8 +184,9 @@ def eval_cmsis(samples, time_overhead, cycle_overhead):
                 f.write(f'  Actual was {label}\n')
 
 
+# assert False, 'having trouble getting SIMD convs specified with Relay'
 def eval_micro(samples, time_overhead, cycle_overhead):
-    mod, params = gen_cifar10_cnn(USE_RANDOM_PARAMS)
+    mod, params = gen_cifar10_cnn(TVM_DATA_LAYOUT, TVM_KERNEL_LAYOUT, USE_RANDOM_PARAMS)
     # Begin a session
     print('[Initting]')
     with micro.Session(TVM_DEV_CONFIG) as sess:
@@ -188,15 +194,24 @@ def eval_micro(samples, time_overhead, cycle_overhead):
         print('[Building]')
         from tvm import autotvm
         DEVICE_ID = 'arm.stm32f746xx'
-        E2E_LOG_FILE_NAME = f'{DEVICE_ID}.e2e.log'
+        # E2E_LOG_FILE_NAME = f'{DEVICE_ID}.e2e.log'
+        E2E_LOG_FILE_NAME = f'autotvm_logs/pre_simd/{DEVICE_ID}.e2e.log.manually_fixed'
         if USE_TUNED_SCHEDULES:
             #assert False, "will apply history best use the best in the log file? can we have multiple entries for the same workload?"
             with autotvm.apply_history_best(E2E_LOG_FILE_NAME):
                 with TARGET:
-                    graph_mod = relay_micro_build(mod['main'], TVM_DEV_CONFIG, TARGET, params=params)
+                    graph_mod = relay_micro_build(
+                        mod['main'],
+                        TVM_DEV_CONFIG, TARGET,
+                        params=params,
+                        lib_include_paths=CMSIS_INCLUDE_PATHS)
             log_file_name = 'micro_tuned_results.txt'
         else:
-            graph_mod = relay_micro_build(mod['main'], TVM_DEV_CONFIG, TARGET, params=params)
+            graph_mod = relay_micro_build(
+                mod['main'],
+                TVM_DEV_CONFIG, TARGET,
+                params=params,
+                lib_include_paths=CMSIS_INCLUDE_PATHS)
             log_file_name = 'micro_untuned_results.txt'
 
         with open(log_file_name, 'w') as f:
@@ -233,7 +248,9 @@ def eval_micro(samples, time_overhead, cycle_overhead):
                 #break
 
 
-time_overhead, cycle_overhead = get_comm_overhead(TVM_DEV_CONFIG)
+# time_overhead, cycle_overhead = get_comm_overhead(TVM_DEV_CONFIG)
+time_overhead, cycle_overhead = 0.0, 0
+
 samples = get_sample_points(NUM_SAMPLES)
 #eval_cmsis(samples, time_overhead, cycle_overhead)
 eval_micro(samples, time_overhead, cycle_overhead)
@@ -302,6 +319,7 @@ if micro_eval.util.DEBUG_MODE:
         input('========================================')
 
 
+assert False, "might need to add ops to topi_integration and relay_integration python files"
 assert False, "merge conv2d simd_v0 tuning results with e2e simd results"
 
 #if micro_eval.util.DEBUG_MODE:

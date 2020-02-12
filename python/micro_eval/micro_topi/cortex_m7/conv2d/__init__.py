@@ -1,18 +1,3 @@
-from tvm.autotvm.task.topi_integration import TaskExtractEnv, deserialize_args
-
-# init autotvm env to register uTVM ops
-TaskExtractEnv()
-
-#def register_micro_dev_tuning_tasks():
-#
-#    autotvm.register_topi_compute(
-#            conv2d_arm_micro_nchw, 'micro_dev', ['direct'])
-#    autotvm.register_topi_schedule(
-#            schedule_conv2d_arm_micro_nchw, 'micro_dev', ['direct'])
-#
-#    #autotvm.template(conv2d_arm_micro_nchw_template)
-#    autotvm.task.register(conv2d_arm_micro_nchw_template, "topi_nn_conv2d", override=True)
-
 def gen_conv2d(data_layout, kernel_layout):
     assert data_layout == "NHWC"
     assert kernel_layout == "HWOI"

@@ -1,4 +1,5 @@
 import tvm
+from tvm import autotvm
 from topi.util import simplify, get_const_tuple, traverse_inline
 from topi.nn.pad import pad
 from topi.nn.util import get_pad_tuple
@@ -6,16 +7,19 @@ from topi.nn.util import get_pad_tuple
 from micro_eval.micro_topi import (
         op_decl, register_compute, register_schedule
 )
+from micro_eval.micro_topi.cortex_m7.micro_kernel.gemm import (
+        intrin_gemm_MxKxN, gemm_MxKxN_impl,
+)
 
 @op_decl(in_tensors=['data', 'kernel'])
 def conv2d_direct_simd(
         compute_func, schedule_func,
-        cfg,
         data, kernel, strides, padding, dilation, out_dtype):
     # TODO how can we architect micro_topi so autotvm templates and regular schedules fall into the
     # same structure?
     #
     # could do `cfg=None` and `if cfg is None: cfg = autotvm.get_config()`
+    cfg = autotvm.get_config()
     data, kernel, conv = compute_func(cfg, data, kernel, strides, padding, dilation, out_dtype)
     sched = schedule_func(cfg, [data, kernel, conv])
     return sched, [data, kernel, conv]
@@ -90,7 +94,9 @@ def conv2d_direct_simd_nhwc_compute(cfg, data, kernel, strides, padding, dilatio
 
 @register_schedule(conv2d_direct_simd, data='NHWC', kernel='HWOI')
 def conv2d_direct_simd_nhwc_schedule(cfg, outs):
+    import pdb; pdb.set_trace()
     sched = tvm.create_schedule([x.op for x in outs])
+    import pdb; pdb.set_trace()
 
     def _callback(op):
         if 'conv2d_nhwc' not in op.tag:
@@ -110,6 +116,7 @@ def conv2d_direct_simd_nhwc_schedule(cfg, outs):
         M = cfg['tile_ow'].size[-1]
         K = cfg['tile_ci'].size[-1]
         N = cfg['tile_co'].size[-1]
+        import pdb; pdb.set_trace()
 
         owo, owi = cfg['tile_ow'].apply(sched, conv, ow)
         cio, cii = cfg['tile_ci'].apply(sched, conv, ci)
@@ -150,15 +157,15 @@ def conv2d_direct_simd_nhwc_schedule(cfg, outs):
         sched[output].pragma(kernel_scope, 'auto_unroll_max_step', cfg['auto_unroll_max_step'].val)
         sched[output].pragma(kernel_scope, 'unroll_explicit', cfg['unroll_explicit'].val)
 
-    traverse_inline(sched, outs[0].op, _callback)
+    traverse_inline(sched, outs[-1].op, _callback)
     return sched
 
 
 # @autotvm.template
-# def conv2d_arm_micro_nhwc_template(*args, **kwargs):
-#     return _conv2d_arm_micro_nhwc_template(*args, **kwargs)
+# def _topi_nn_micro_direct_simd_conv2d_template(*args, **kwargs):
+#     return conv2d_direct_simd(autotvm.get_config(), *args, **kwargs)
 
 
-# @autotvm.task.register('topi_nn_conv2d', override=True)
-# def conv2d_arm_micro_nhwc_topi_task(*args, **kwargs):
-#    return _conv2d_arm_micro_nhwc_template(*args, **kwargs)
+# @autotvm.task.register('topi_nn_micro_direct_simd_conv2d', override=True)
+# def _topi_nn_micro_direct_simd_conv2d(*args, **kwargs):
+#    return _topi_nn_micro_direct_simd_conv2d_template(*args, **kwargs)

@@ -1,4 +1,5 @@
 import tvm
+from tvm import autotvm
 from topi.util import simplify, get_const_tuple, traverse_inline
 from topi.nn.pad import pad
 from topi.nn.util import get_pad_tuple
@@ -11,8 +12,8 @@ from micro_eval.micro_topi import (
 @op_decl(in_tensors=['data', 'kernel'])
 def conv2d_direct(
         compute_func, schedule_func,
-        cfg,
         data, kernel, strides, padding, dilation, out_dtype):
+    cfg = autotvm.get_config()
     data, kernel, conv = compute_func(cfg, data, kernel, strides, padding, dilation, out_dtype)
     sched = schedule_func(cfg, [data, kernel, conv])
     return sched, [data, kernel, conv]
@@ -133,5 +134,24 @@ def conv2d_direct_nhwc_schedule(cfg, outs):
         sched[output].pragma(kernel_scope, 'auto_unroll_max_step', cfg['auto_unroll_max_step'].val)
         sched[output].pragma(kernel_scope, 'unroll_explicit', cfg['unroll_explicit'].val)
 
-    traverse_inline(sched, outs[0].op, _callback)
+    traverse_inline(sched, outs[-1].op, _callback)
     return sched
+
+
+@autotvm.template
+def _topi_nn_micro_direct_conv2d_template(*args, **kwargs):
+    return conv2d_direct(autotvm.get_config(), *args, **kwargs)
+
+
+from tvm.autotvm.task.topi_integration import TaskExtractEnv
+TaskExtractEnv()
+
+# @autotvm.task.register('topi_nn_micro_direct_conv2d', override=True)
+@autotvm.task.register('topi_nn_conv2d', override=True)
+def _topi_nn_micro_direct_conv2d(*args, **kwargs):
+    import pdb; pdb.set_trace()
+    return _topi_nn_micro_direct_conv2d_template(*args, **kwargs)
+
+
+autotvm.register_topi_compute(conv2d_direct_nchw_compute, 'micro_dev', ['direct'])
+autotvm.register_topi_schedule(conv2d_direct_nchw_schedule, 'micro_dev', ['direct'])
