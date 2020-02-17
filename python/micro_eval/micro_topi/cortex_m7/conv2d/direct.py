@@ -1,62 +1,47 @@
 import tvm
 from tvm import autotvm
-from topi.util import simplify, get_const_tuple, traverse_inline
+from topi.util import simplify, get_const_tuple, get_const_int, traverse_inline
 from topi.nn.pad import pad
 from topi.nn.util import get_pad_tuple
-from topi.nn.conv2d import conv2d_nchw, conv2d_nhwc
+from topi.nn.conv2d import conv2d, conv2d_nchw, conv2d_nhwc
+from topi.generic.nn import schedule_conv2d_nhwc, schedule_conv2d_nchw
+from tvm.autotvm.task.topi_integration import deserialize_args
 
-from micro_eval.micro_topi import (
-    op_decl, register_compute, register_schedule
-)
-
-@op_decl(in_tensors=['data', 'kernel'])
-def conv2d_direct(
-        compute_func, schedule_func,
-        data, kernel, strides, padding, dilation, out_dtype):
+def conv2d_direct(*args, **kwargs):
+    assert not kwargs, "Do not support kwargs in template function call"
+    args = deserialize_args(args)
+    data, kernel = args[:2]
+    layout = args[-2]
     cfg = autotvm.get_config()
-    data, kernel, conv = compute_func(cfg, data, kernel, strides, padding, dilation, out_dtype)
-    sched = schedule_func(cfg, [data, kernel, conv])
+    args = [cfg] + args
+    conv = conv2d_direct_compute(*args)
+    if layout == 'NHWC':
+        sched = conv2d_direct_nhwc_schedule(cfg, [data, kernel, conv])
+    elif layout == 'NCHW':
+        sched = conv2d_direct_nchw_schedule(cfg, [data, kernel, conv])
+    else:
+        raise RuntimeError(f'unsupported data layout "{layout}"')
     return sched, [data, kernel, conv]
 
 
-@register_compute(conv2d_direct, data='NCHW', kernel='OIHW')
-def conv2d_direct_nchw_compute(cfg, data, kernel, strides, padding, dilation, out_dtype):
-    conv = conv2d_nchw(data, kernel, strides, padding, dilation, out_dtype)
-
-    ###########################
-    # Config Space Definition #
-    ###########################
-    cfg.define_knob('auto_unroll_max_step', [0, 2, 4, 8, 16, 32])
-    cfg.define_knob('unroll_explicit', [0, 1])
-
-    return data, kernel, conv
+@autotvm.template
+def conv2d_direct_template(*args, **kwargs):
+    return conv2d_direct(*args, **kwargs)
 
 
-@register_schedule(conv2d_direct, data='NCHW', kernel='OIHW')
-def conv2d_direct_nchw_schedule(cfg, outs):
-    # use default schedule
-    sched = tvm.create_schedule([x.op for x in outs])
-
-    conv = outs[-1].op
-    output = conv.output(0)
-    data_vec = conv.input_tensors[0]
-    data_pad = data_vec.op
-    sched[data_pad].compute_inline()
-
-    # TODO add more schedule opts (similar to the NHWC template)
-
-    n, _, _, _ = sched[conv].op.axis
-    kernel_scope = n  # this is the scope to attach global config inside this kernel
-
-    # tune unroll
-    sched[output].pragma(kernel_scope, 'auto_unroll_max_step', cfg['auto_unroll_max_step'].val)
-    sched[output].pragma(kernel_scope, 'unroll_explicit', cfg['unroll_explicit'].val)
-
-    return sched
+@autotvm.register_topi_compute(conv2d, 'micro_dev', ['direct'])
+def conv2d_direct_compute(*args):
+    layout = args[-2]
+    if layout == 'NHWC':
+        return _conv2d_direct_nhwc_compute(*args)
+    elif layout == 'NCHW':
+        return _conv2d_direct_nchw_compute(*args)
+    else:
+        raise RuntimeError(f'unsupported data layout "{layout}"')
 
 
-@register_compute(conv2d_direct, data='NHWC', kernel='HWIO')
-def conv2d_direct_nhwc_compute(cfg, data, kernel, strides, padding, dilation, out_dtype):
+def _conv2d_direct_nhwc_compute(cfg, data, kernel, strides, padding, dilation, layout, out_dtype):
+    assert layout == 'NHWC'
     conv = conv2d_nhwc(data, kernel, strides, padding, dilation, out_dtype)
 
     ###########################
@@ -86,10 +71,23 @@ def conv2d_direct_nhwc_compute(cfg, data, kernel, strides, padding, dilation, ou
     cfg.define_knob('auto_unroll_max_step', [0, 2, 4, 8, 16, 32])
     cfg.define_knob('unroll_explicit', [0, 1])
 
-    return data, kernel, conv
+    return conv
 
 
-@register_schedule(conv2d_direct, data='NHWC', kernel='HWIO')
+def _conv2d_direct_nchw_compute(cfg, data, kernel, strides, padding, dilation, layout, out_dtype):
+    assert layout == 'NCHW'
+    conv = conv2d_nchw(data, kernel, strides, padding, dilation, out_dtype)
+
+    ###########################
+    # Config Space Definition #
+    ###########################
+    cfg.define_knob('auto_unroll_max_step', [0, 2, 4, 8, 16, 32])
+    cfg.define_knob('unroll_explicit', [0, 1])
+
+    return conv
+
+
+@autotvm.register_topi_schedule(schedule_conv2d_nhwc, 'micro_dev', ['direct'])
 def conv2d_direct_nhwc_schedule(cfg, outs):
     sched = tvm.create_schedule([x.op for x in outs])
 
@@ -138,20 +136,24 @@ def conv2d_direct_nhwc_schedule(cfg, outs):
     return sched
 
 
-@autotvm.template
-def _topi_nn_micro_direct_conv2d_template(*args, **kwargs):
-    return conv2d_direct(autotvm.get_config(), *args, **kwargs)
+@autotvm.register_topi_schedule(schedule_conv2d_nchw, 'micro_dev', ['direct'])
+def conv2d_direct_nchw_schedule(cfg, outs):
+    # use default schedule
+    sched = tvm.create_schedule([x.op for x in outs])
 
+    conv = outs[-1].op
+    output = conv.output(0)
+    data_vec = conv.input_tensors[0]
+    data_pad = data_vec.op
+    sched[data_pad].compute_inline()
 
-from tvm.autotvm.task.topi_integration import TaskExtractEnv
-TaskExtractEnv()
+    # TODO add more schedule opts (similar to the NHWC template)
 
-# @autotvm.task.register('topi_nn_micro_direct_conv2d', override=True)
-@autotvm.task.register('topi_nn_conv2d', override=True)
-def _topi_nn_micro_direct_conv2d(*args, **kwargs):
-    import pdb; pdb.set_trace()
-    return _topi_nn_micro_direct_conv2d_template(*args, **kwargs)
+    n, _, _, _ = sched[conv].op.axis
+    kernel_scope = n  # this is the scope to attach global config inside this kernel
 
+    # tune unroll
+    sched[output].pragma(kernel_scope, 'auto_unroll_max_step', cfg['auto_unroll_max_step'].val)
+    sched[output].pragma(kernel_scope, 'unroll_explicit', cfg['unroll_explicit'].val)
 
-autotvm.register_topi_compute(conv2d_direct_nchw_compute, 'micro_dev', ['direct'])
-autotvm.register_topi_schedule(conv2d_direct_nchw_schedule, 'micro_dev', ['direct'])
+    return sched

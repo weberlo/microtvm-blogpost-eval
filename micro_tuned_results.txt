@@ -1,0 +1,50 @@
+[Sample 0]
+  Model execution took 1504.872925 milliseconds and 26020176.0 cycles
+  Output: [[-11  -2 -12 -12  -1  -9  -9  -9   5   7]]
+  Prediction was Truck
+  Actual was Dog
+[Sample 1]
+  Model execution took 1506.2701940000002 milliseconds and 26021967.0 cycles
+  Output: [[  4  -6 -11   4  -6  -5 -14 -32  18  16]]
+  Prediction was Ship
+  Actual was Horse
+[Sample 2]
+  Model execution took 1504.547404 milliseconds and 26020507.0 cycles
+  Output: [[-2 -2 -1 -4  0 -3 -2 -3  0 -1]]
+  Prediction was Deer
+  Actual was Frog
+[Sample 3]
+  Model execution took 1504.715428 milliseconds and 26019119.0 cycles
+  Output: [[-3 -4 -2 -3 -2 -3 -5 -5  3  4]]
+  Prediction was Truck
+  Actual was Plane
+[Sample 4]
+  Model execution took 1504.457124 milliseconds and 26022079.0 cycles
+  Output: [[  0  -6  -4   0 -11  -4 -22 -35  16  16]]
+  Prediction was Ship
+  Actual was Ship
+[Sample 5]
+  Model execution took 1504.392884 milliseconds and 26020180.0 cycles
+  Output: [[-8  1 -6 -4  1 -8 -6 -2  3  5]]
+  Prediction was Truck
+  Actual was Deer
+[Sample 6]
+  Model execution took 1505.130437 milliseconds and 26020830.0 cycles
+  Output: [[  4 -13  -7   1  -3  -1  -5 -25   6   9]]
+  Prediction was Truck
+  Actual was Frog
+[Sample 7]
+  Model execution took 1504.80699 milliseconds and 26019020.0 cycles
+  Output: [[-3 -1  0 -2 -2 -2 -3 -2  0  3]]
+  Prediction was Truck
+  Actual was Plane
+[Sample 8]
+  Model execution took 1504.974264 milliseconds and 26021588.0 cycles
+  Output: [[-6 -5 -4 -7  0 -6 -2 -6  4  2]]
+  Prediction was Ship
+  Actual was Car
+[Sample 9]
+  Model execution took 1505.632359 milliseconds and 26025671.0 cycles
+  Output: [[-4 -3 -8 -5 -3 -6 -6 -5  1  3]]
+  Prediction was Truck
+  Actual was Truck

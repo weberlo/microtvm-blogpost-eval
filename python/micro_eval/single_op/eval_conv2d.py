@@ -28,9 +28,9 @@ from tvm.micro import create_micro_mod
 from tvm.relay.testing import resnet
 from tvm.relay import transform
 from tvm.relay import create_executor
-from tvm.autotvm.task.dispatcher import FallbackContext
+from tvm.autotvm.task.dispatcher import FallbackContext, ApplyConfig
 from tvm.autotvm.task.space import (
-    FallbackConfigEntity, ReorderEntity, SplitEntity, OtherOptionEntity
+    FallbackConfigEntity, ConfigEntity, ReorderEntity, SplitEntity, OtherOptionEntity
 )
 
 from topi.util import get_const_tuple
@@ -55,7 +55,7 @@ from micro_eval.micro_topi.cortex_m7.micro_kernel.gemm import (
 )
 from micro_eval.micro_topi.cortex_m7.conv2d.direct import conv2d_direct
 from micro_eval.micro_topi.cortex_m7.conv2d.direct_simd import conv2d_direct_simd
-from micro_eval.micro_topi.cortex_m7.conv2d.partial_im2col import conv2d_partial_im2col
+# from micro_eval.micro_topi.cortex_m7.conv2d.partial_im2col import conv2d_partial_im2col
 
 from tvm.micro.device.arm import stm32f746xx
 from tvm.micro.device.arm.stm32f746xx import MemConstraint
@@ -85,12 +85,12 @@ TIME_OVERHEAD, CYCLE_OVERHEAD = 0.0, 0
 ###############
 # CONV CONFIG #
 ###############
-N, H, W, CO, CI = 1, 16, 16, 32, 32
-KH, KW = 5, 5
-STRIDES, PADDING, DILATION = (1, 1), 2, 1
-# N, H, W, CO, CI = 1, 8, 8, 4, 4
-# KH, KW = 3, 3
-# STRIDES, PADDING, DILATION = (1, 1), 1, 1
+# N, H, W, CO, CI = 1, 16, 16, 32, 32
+# KH, KW = 5, 5
+# STRIDES, PADDING, DILATION = (1, 1), 2, 1
+N, H, W, CO, CI = 1, 8, 8, 4, 4
+KH, KW = 3, 3
+STRIDES, PADDING, DILATION = (1, 1), 1, 1
 IN_DTYPE = 'int8'
 OUT_DTYPE = 'int32'
 
@@ -217,9 +217,8 @@ def eval_direct(sess, data_nt, kernel_nt):
         kernel_nt = kernel_nt.with_layout(kernel_layout)
         out_type = OUT_TYPE.with_layout(data_layout)
         sched, arg_bufs = conv2d_direct(
-                FallbackConfigEntity(),
-                data_nt.typ, kernel_nt.typ,
-                STRIDES, PADDING, DILATION, out_type.dtype)
+                data_nt.typ.serialize(), kernel_nt.typ.serialize(),
+                STRIDES, PADDING, DILATION, data_layout, out_type.dtype)
         c_mod = tvm.build(sched, arg_bufs, target=TARGET, name='conv2d')
         time = eval_micro(sess, c_mod, data_nt, kernel_nt, out_type)
         time -= TIME_OVERHEAD
@@ -227,21 +226,23 @@ def eval_direct(sess, data_nt, kernel_nt):
     return results
 
 
-class DirectSimdFallback(autotvm.FallbackContext):
+# TODO it seems like this is the wrong way to specify a deterministic config
+# for a template. what is the right way?
+class DirectSimdConfig(autotvm.FallbackContext):
     def __init__(self, M, K, N):
-        super(DirectSimdFallback, self).__init__()
+        super(DirectSimdConfig, self).__init__()
         self.M = M
         self.K = K
         self.N = N
 
     def _query_inside(self, target, workload):
         key = (target, workload)
-        import pdb; pdb.set_trace()
         if key in self.memory:
             return self.memory[key]
         cfg = FallbackConfigEntity()
-        cfg.template_key = 'direct_simd'
+        cfg._collect = False
         cfg.is_fallback = False
+        cfg.template_key = 'direct_simd'
         cfg['tile_ow'] = SplitEntity([-1, self.M])
         cfg['tile_ci'] = SplitEntity([-1, self.K])
         cfg['tile_co'] = SplitEntity([-1, self.N])
@@ -260,24 +261,6 @@ class DirectSimdFallback(autotvm.FallbackContext):
 
 def eval_direct_simd(sess, data_nt, kernel_nt):
     results = []
-    # def gen_direct_simd_cfg(M, K, N):
-    #     cfg = FallbackConfigEntity()
-    #     cfg.template_key = 'direct_simd'
-    #     cfg.is_fallback = False
-    #     cfg['tile_ow'] = SplitEntity([-1, M])
-    #     cfg['tile_ci'] = SplitEntity([-1, K])
-    #     cfg['tile_co'] = SplitEntity([-1, N])
-    #     # TODO we shouldn't need to mirror the order of the axes
-    #     # specified in the config space definition to mock a reordering
-    #     # here
-    #     reorder_base = ['n', 'oh', 'owo', 'owi', 'coo', 'coi', 'kh', 'kw', 'cio', 'cii']
-    #     reorder_target = ['n', 'oh', 'kh', 'kw', 'owo', 'coo', 'cio', 'owi', 'coi', 'cii']
-    #     cfg['reorder_0_simd'] = ReorderEntity(
-    #         [reorder_base.index(axis) for axis in reorder_target])
-    #     cfg['auto_unroll_max_step'] = OtherOptionEntity(0)
-    #     cfg['unroll_explicit'] = OtherOptionEntity(0)
-    #     return cfg
-
     DATA_LAYOUT = 'NHWC'
     KERNEL_LAYOUT = 'HWOI'
 
@@ -285,20 +268,16 @@ def eval_direct_simd(sess, data_nt, kernel_nt):
     kernel_nt = kernel_nt.with_layout(KERNEL_LAYOUT)
     out_type = OUT_TYPE.with_layout(DATA_LAYOUT)
     # TODO autogen candidates?
-    # for microkernel_type in [(1, 4, 1), (2, 4, 2), (4, 4, 4)]:
-    for (M, K, N) in [(W // 4, CI // 4, CO // 4), (W // 2, CI // 2, CO // 2), (W, CI, CO)]:
-        # import pdb; pdb.set_trace()
-        # sched_cfg = gen_direct_simd_cfg(*microkernel_type)
-        with DirectSimdFallback(M, K, N):
-            with TARGET:
-                sched, arg_bufs = conv2d_direct_simd(
-                    data_nt.typ, kernel_nt.typ,
-                    STRIDES, PADDING, DILATION, OUT_DTYPE)
+    for (M, K, N) in [(1, 4, 1), (2, 4, 2), (4, 4, 4)]:
+        with DirectSimdConfig(M, K, N), TARGET:
+            sched, arg_bufs = conv2d_direct_simd(
+                data_nt.typ.serialize(), kernel_nt.typ.serialize(),
+                STRIDES, PADDING, DILATION, DATA_LAYOUT, OUT_DTYPE)
         c_mod = tvm.build(sched, arg_bufs, target=TARGET, name='conv2d')
-        input(c_mod.get_source())
+        print(c_mod.get_source())
         time = eval_micro(sess, c_mod, data_nt, kernel_nt, out_type)
         time -= TIME_OVERHEAD
-        results.append((microkernel_type, time))
+        results.append(((M, K, N), time))
     return results
 
 
@@ -332,50 +311,65 @@ def main():
 
     data_nt = DATA_TYPE.gen_rand_tensor(-10, 10)
     kernel_nt = KERNEL_TYPE.gen_rand_tensor(-3, 3)
+    all_results = []
     with micro.Session(DEV_CONFIG) as sess:
-        # # CMSIS-NN
-        # cmsis_results = eval_cmsis(sess, data_nt, kernel_nt, CMSIS_OUT_TYPE)
-        # # direct w/o SIMD
-        # default_results = eval_direct(sess, data_nt, kernel_nt)
+#         # CMSIS-NN
+#         cmsis_results = eval_cmsis(sess, data_nt, kernel_nt, CMSIS_OUT_TYPE)
+#         all_results.append(
+# f"""
+# ############
+# # CMSIS-NN #
+# ############
+# {cmsis_results}
+# """
+#         )
+
+        # direct w/o SIMD
+        [default_nchw_time, default_nhwc_time] = eval_direct(sess, data_nt, kernel_nt)
+        all_results.append(
+f"""
+##########
+# DIRECT #
+##########
+  NCHW time: {default_nchw_time}
+  NHWC time: {default_nhwc_time}
+"""
+        )
+
         # direct w/ SIMD
         direct_simd_results = eval_direct_simd(sess, data_nt, kernel_nt)
-        # # partial im2col w/ SIMD
-        # partial_im2col_simd_results = eval_partial_im2col_simd(sess, data_nt, kernel_nt)
+        [small_direct_simd_time, medium_direct_simd_time, large_direct_simd_time] = direct_simd_results
+        all_results.append(
+f"""
+#################
+# DIRECT + SIMD #
+#################
+  small time: {small_direct_simd_time}
+  medium time: {medium_direct_simd_time}
+  large time: {large_direct_simd_time}
+"""
+        )
+
+    # TODO repair partial im2col
+#         # partial im2col w/ SIMD
+#         partial_im2col_simd_results = eval_partial_im2col_simd(sess, data_nt, kernel_nt)
+#         i2c_report = [
+# f"""
+# ######################
+# # IM2COL CONV + SIMD #
+# ######################""".strip()
+#         ]
+#         for (batch_size, i2c_simd_time) in partial_im2col_simd_results:
+#             i2c_report.append(f'  batch of {batch_size} time: {i2c_simd_time}')
+#         i2c_report = '\n'.join(i2c_report)
+#         all_results.append(i2c_report)
+
+        print('\n\n'.join(map(lambda s: s.strip(), all_results)))
 
         # TODO write function that gives a 2d heatmap of mismatches (showing
         # percentage of entries that don't match) by choosing two view axes and
         # reducing other axes
 
-        print('############')
-        print('# CMSIS-NN #')
-        print('############')
-        print(cmsis_results)
-        print()
-
-        # [default_nchw_time, default_nhwc_time] = default_results
-        # print()
-        # print('###########')
-        # print('# DEFAULT #')
-        # print('###########')
-        # print(f'  NCHW time: {default_nchw_time}')
-        # print(f'  NHWC time: {default_nhwc_time}')
-        # print()
-
-        [small_direct_simd_time, medium_direct_simd_time, large_direct_simd_time] = direct_simd_results
-        print('######################')
-        print('# DIRECT CONV + SIMD #')
-        print('######################')
-        print(f'  small time: {small_direct_simd_time}')
-        print(f'  medium time: {medium_direct_simd_time}')
-        print(f'  large time: {large_direct_simd_time}')
-        print()
-
-        # print('######################')
-        # print('# IM2COL CONV + SIMD #')
-        # print('######################')
-        # for (batch_size, i2c_simd_time) in partial_im2col_simd_results:
-        #     print(f'  batch of {batch_size} time: {i2c_simd_time}')
-        # print()
 
 
 if __name__ == "__main__":

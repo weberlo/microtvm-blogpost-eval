@@ -2,7 +2,10 @@ import tvm
 from tvm import autotvm
 from topi.util import simplify, get_const_tuple, traverse_inline
 from topi.nn.pad import pad
+from topi.nn.conv2d import conv2d, conv2d_nchw, conv2d_nhwc
+from topi.generic.nn import schedule_conv2d_nhwc
 from topi.nn.util import get_pad_tuple
+from tvm.autotvm.task.topi_integration import deserialize_args
 
 from micro_eval.micro_topi import (
         op_decl, register_compute, register_schedule
@@ -11,24 +14,29 @@ from micro_eval.micro_topi.cortex_m7.micro_kernel.gemm import (
         intrin_gemm_MxKxN, gemm_MxKxN_impl,
 )
 
-@op_decl(in_tensors=['data', 'kernel'])
-def conv2d_direct_simd(
-        compute_func, schedule_func,
-        data, kernel, strides, padding, dilation, out_dtype):
-    # TODO how can we architect micro_topi so autotvm templates and regular schedules fall into the
-    # same structure?
-    #
-    # could do `cfg=None` and `if cfg is None: cfg = autotvm.get_config()`
+def conv2d_direct_simd(*args, **kwargs):
+    assert not kwargs, "Do not support kwargs in template function call"
+    args = deserialize_args(args)
+    data, kernel = args[:2]
+    layout = args[-2]
     cfg = autotvm.get_config()
-    data, kernel, conv = compute_func(cfg, data, kernel, strides, padding, dilation, out_dtype)
-    sched = schedule_func(cfg, [data, kernel, conv])
+    args = [cfg] + args
+    assert layout == 'NHWC'
+    conv = conv2d_direct_simd_compute(*args)
+    sched = conv2d_direct_simd_nhwc_schedule(cfg, [data, kernel, conv])
     return sched, [data, kernel, conv]
 
 
-@register_compute(conv2d_direct_simd, data='NHWC', kernel='HWOI')
-def conv2d_direct_simd_nhwc_compute(cfg, data, kernel, strides, padding, dilation, out_dtype):
+@autotvm.template
+def conv2d_direct_simd_template(*args, **kwargs):
+    return conv2d_direct_simd(*args, **kwargs)
+
+
+@autotvm.register_topi_compute(conv2d, 'micro_dev', ['direct_simd'])
+def conv2d_direct_simd_compute(cfg, data, kernel, strides, padding, dilation, layout, out_dtype):
     assert isinstance(strides, int) or len(strides) == 2
     assert isinstance(dilation, int) or len(dilation) == 2
+    assert layout == 'NHWC'
 
     if isinstance(strides, int):
         stride_h = stride_w = strides
@@ -89,14 +97,12 @@ def conv2d_direct_simd_nhwc_compute(cfg, data, kernel, strides, padding, dilatio
     cfg.define_knob('auto_unroll_max_step', [0, 2, 4, 8, 16, 32])
     cfg.define_knob('unroll_explicit', [0, 1])
 
-    return data, kernel, conv
+    return conv
 
 
-@register_schedule(conv2d_direct_simd, data='NHWC', kernel='HWOI')
+@autotvm.register_topi_schedule(schedule_conv2d_nhwc, 'micro_dev', ['direct_simd'])
 def conv2d_direct_simd_nhwc_schedule(cfg, outs):
-    import pdb; pdb.set_trace()
     sched = tvm.create_schedule([x.op for x in outs])
-    import pdb; pdb.set_trace()
 
     def _callback(op):
         if 'conv2d_nhwc' not in op.tag:
@@ -116,7 +122,6 @@ def conv2d_direct_simd_nhwc_schedule(cfg, outs):
         M = cfg['tile_ow'].size[-1]
         K = cfg['tile_ci'].size[-1]
         N = cfg['tile_co'].size[-1]
-        import pdb; pdb.set_trace()
 
         owo, owi = cfg['tile_ow'].apply(sched, conv, ow)
         cio, cii = cfg['tile_ci'].apply(sched, conv, ci)
@@ -159,13 +164,3 @@ def conv2d_direct_simd_nhwc_schedule(cfg, outs):
 
     traverse_inline(sched, outs[-1].op, _callback)
     return sched
-
-
-# @autotvm.template
-# def _topi_nn_micro_direct_simd_conv2d_template(*args, **kwargs):
-#     return conv2d_direct_simd(autotvm.get_config(), *args, **kwargs)
-
-
-# @autotvm.task.register('topi_nn_micro_direct_simd_conv2d', override=True)
-# def _topi_nn_micro_direct_simd_conv2d(*args, **kwargs):
-#    return _topi_nn_micro_direct_simd_conv2d_template(*args, **kwargs)

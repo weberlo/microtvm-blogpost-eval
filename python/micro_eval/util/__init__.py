@@ -1,4 +1,4 @@
-from collections import Iterable
+from collections import Iterable, OrderedDict
 import json
 import os
 from typing import *
@@ -45,30 +45,36 @@ class NamedTensor:
             indices.append(idx)
         return NamedTensor(self.data.transpose(tuple(indices)), layout)
 
+    def resize(self, **new_dims):
+        for dim_name, dim_size in new_dims.items():
+            self.typ.dims[dim_name] = dim_size
+        self.data.resize(self.typ.shape)
+
 
 class NamedType:
-    def __init__(self, layout_dict: Dict[str, int], dtype=None):
-        self.dim_names = []
-        for dim_name, dim_size in layout_dict.items():
-            assert len(dim_name) == 1, 'dimension names must be single characters'
-            setattr(self, dim_name, dim_size)
-            self.dim_names.append(dim_name)
+    def __init__(self, dim_dict: Dict[str, int], dtype=None):
+        self.dim_dict = dim_dict
         if dtype is not None:
             self._dtype = dtype
 
     def with_layout(self, layout):
         layout_list = []
         for dim_name in layout:
-            layout_list.append((dim_name, getattr(self, dim_name)))
+            dim_size = self.dim_dict[dim_name]
+            layout_list.append((dim_name, dim_size))
         return BakedType(layout_list, dtype=getattr(self, '_dtype', None))
 
     def gen_rand_tensor(self, low, high) -> NamedTensor:
+        """Create a tensor with random entries between `low` and `high`.
+
+        Useful for testing multiple ops with different input layouts.
+        """
         # create a baked type with an arbitrary layout to use its random tensor generation method
-        return self.with_layout(''.join(self.dim_names)).gen_rand_tensor(low, high)
+        return self.with_layout(list(self.dim_dict.keys())).gen_rand_tensor(low, high)
 
     def gen_empty(self) -> NamedTensor:
         # create a baked type with an arbitrary layout to use its empty tensor generation method
-        return self.with_layout(''.join(self.dim_names)).gen_zero_tensor()
+        return self.with_layout(list(self.dim_dict.keys())).gen_zero_tensor()
 
     @property
     def dtype(self):
@@ -77,22 +83,23 @@ class NamedType:
 
 
 class BakedType:
-    def __init__(self, layout_iter: Iterable[Tuple[str, int]], dtype=None):
-        layout = []
-        shape = []
-        assert isinstance(layout_iter, Iterable)
-        for dim_name, dim_size in layout_iter:
-            assert len(dim_name) == 1, 'dimension names must be single characters'
-            setattr(self, dim_name, dim_size)
-            layout.append(dim_name)
-            shape.append(dim_size)
-        self.layout = ''.join(layout)
-        self.shape = tuple(shape)
+    def __init__(self, dim_iter: Iterable[Tuple[str, int]], dtype=None):
+        # layout = []
+        # shape = []
+        # assert isinstance(dim_iter, Iterable)
+        # for dim_name, dim_size in dim_iter:
+        #     # assert len(dim_name) == 1, 'dimension names must be single characters'
+        #     # setattr(self, dim_name, dim_size)
+        #     layout.append(dim_name)
+        #     shape.append(dim_size)
+        # self.layout = layout
+        # self.shape = tuple(shape)
+        self.dims = OrderedDict(list(dim_iter))
         if dtype is not None:
             self._dtype = dtype
 
-    def gen_spec(self):
-        """Create an AutoTVM style spec (e.g., `('TENSOR', (1, 2, 3), 'int8')`)."""
+    def serialize(self):
+        """Serialize to an AutoTVM style spec (e.g., `('TENSOR', (1, 2, 3), 'int8')`)."""
         return ('TENSOR', self.shape, self.dtype)
 
     def gen_rand_tensor(self, low, high) -> NamedTensor:
@@ -106,6 +113,14 @@ class BakedType:
 
     def gen_zero_tensor(self) -> NamedTensor:
         return NamedTensor(np.zeros(self.shape, dtype=self.dtype), self.layout)
+
+    @property
+    def shape(self):
+        return tuple(self.dims.values())
+
+    @property
+    def layout(self):
+        return tuple(self.dims.keys())
 
     @property
     def dtype(self):
@@ -168,7 +183,7 @@ def relay_micro_build(func, dev_config, target, params=None, lib_include_paths=N
            graph, c_mod, params = relay.build(func, target=target, params=params)
     # with relay.build_config(opt_level=3):
     #     graph, c_mod, params = relay.build(func, target=target, params=params)
-    input(c_mod.get_source())
+    print(c_mod.get_source())
     micro_mod = micro.create_micro_mod(c_mod, dev_config, lib_include_paths=lib_include_paths)
     ctx = tvm.micro_dev(0)
     if DEBUG_MODE:
