@@ -5,7 +5,11 @@ from tvm import relay
 
 from micro_eval.util import NamedType
 
-def gen_cifar10_cnn(data_layout, kernel_layout, simd_friendly, use_random_params=False):
+def gen_cifar10_cnn(data_layout, kernel_layouts, simd_friendly, use_random_params=False):
+    # kernel layouts are specified per conv, but if only a single layout is
+    # passed, that layout is used for all convs
+    if isinstance(kernel_layouts, str):
+        kernel_layouts = [kernel_layouts] * 3
     # TODO change relay/op/tensor/unary.cc _make.clip to accept exprs instead of doubles
     # TODO discrepancies between outputs might be a result of the bias_add op
     # not matching the semantics of the CMSIS bias add.
@@ -17,9 +21,9 @@ def gen_cifar10_cnn(data_layout, kernel_layout, simd_friendly, use_random_params
         data_shape_dict = dict(N=1, C=3, H=32, W=32)
         conv0_shape_dict = dict(O=32, I=3, H=5, W=5)
     data_shape = NamedType(data_shape_dict).with_layout(data_layout).shape
-    conv0_kernel_shape = NamedType(conv0_shape_dict).with_layout(kernel_layout).shape
-    conv1_kernel_shape = NamedType(dict(O=32, I=32, H=5, W=5)).with_layout(kernel_layout).shape
-    conv2_kernel_shape = NamedType(dict(O=64, I=32, H=5, W=5)).with_layout(kernel_layout).shape
+    conv0_kernel_shape = NamedType(conv0_shape_dict).with_layout(kernel_layouts[0]).shape
+    conv1_kernel_shape = NamedType(dict(O=32, I=32, H=5, W=5)).with_layout(kernel_layouts[1]).shape
+    conv2_kernel_shape = NamedType(dict(O=64, I=32, H=5, W=5)).with_layout(kernel_layouts[2]).shape
     bias_add_axis = data_layout.index('C')
     mod = relay.fromtext(f"""
     v0.0.4
@@ -41,7 +45,7 @@ def gen_cifar10_cnn(data_layout, kernel_layout, simd_friendly, use_random_params
              channels=32,
              kernel_size=[5, 5],
              data_layout="{data_layout}",
-             kernel_layout="{kernel_layout}",
+             kernel_layout="{kernel_layouts[0]}",
              out_dtype="int32");
       %2 = nn.bias_add(%1, cast(%conv0_bias, "int32"), axis={bias_add_axis});
       %3 = right_shift(%2, 9);
@@ -59,7 +63,7 @@ def gen_cifar10_cnn(data_layout, kernel_layout, simd_friendly, use_random_params
              channels=32,
              kernel_size=[5, 5],
              data_layout="{data_layout}",
-             kernel_layout="{kernel_layout}",
+             kernel_layout="{kernel_layouts[1]}",
              out_dtype="int32");
       %8 = nn.bias_add(%7, cast(%conv1_bias, "int32"), axis={bias_add_axis});
       %9 = right_shift(%8, 9);
@@ -77,7 +81,7 @@ def gen_cifar10_cnn(data_layout, kernel_layout, simd_friendly, use_random_params
               channels=64,
               kernel_size=[5, 5],
               data_layout="{data_layout}",
-              kernel_layout="{kernel_layout}",
+              kernel_layout="{kernel_layouts[2]}",
               out_dtype="int32");
       %14 = nn.bias_add(%13, cast(%conv2_bias, "int32"), axis={bias_add_axis});
       %15 = right_shift(%14, 9);

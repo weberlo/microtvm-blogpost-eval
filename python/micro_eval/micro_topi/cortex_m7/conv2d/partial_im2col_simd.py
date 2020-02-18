@@ -5,28 +5,43 @@ from topi.nn.pad import pad
 from topi.nn.util import get_pad_tuple
 
 from micro_eval.util import get_op_output_shape
-from micro_eval.micro_topi import (
-        op_decl, register_compute, register_schedule
-)
 from micro_eval.micro_topi.cortex_m7.micro_kernel.gemm import (
-        intrin_gemm_MxKxN, gemm_MxKxN_impl,
+        intrin_gemm_MxKxN, gemm_MxKxN_impl
 )
 
-@op_decl(in_tensors=['data', 'kernel'])
-def conv2d_partial_im2col(
-        compute_func, schedule_func,
-        data, kernel, strides, padding, out_dtype, im2col_batch_size):
-    data, kernel, reshaped_conv = compute_func(
-        data, kernel, strides, padding, out_dtype, im2col_batch_size)
-    sched = schedule_func(data, kernel, reshaped_conv)
-    return sched, [data, kernel, reshaped_conv]
+assert False, 'finish fucking these funcs into the format that direct_simd and direct follow'
+
+def conv2d_partial_im2col_simd(*args, **kwargs):
+        # (data, kernel, strides, padding, out_dtype, im2col_batch_size):
+    # data, kernel, reshaped_conv = compute_func(
+    #     data, kernel, strides, padding, out_dtype, im2col_batch_size)
+    # sched = schedule_func(data, kernel, reshaped_conv)
+    # return sched, [data, kernel, reshaped_conv]
+    assert not kwargs, "Do not support kwargs in template function call"
+    args = deserialize_args(args)
+    data, kernel = args[:2]
+    layout = args[-2]
+    cfg = autotvm.get_config()
+    args = [cfg] + args
+    assert layout == 'NHWC'
+    conv = conv2d_partial_im2col_simd_compute(*args)
+    sched = conv2d_partial_im2col_simd_nhwc_schedule(cfg, [data, kernel, conv])
+    return sched, [data, kernel, conv]
+
+
+@autotvm.template
+def conv2d_partial_im2col_simd_template(*args, **kwargs):
+    return conv2d_partial_im2col_simd(*args, **kwargs)
 
 
 # TODO can we phrase `im2col_batch_size` as an axis split in the schedule,
 # rather than baking it into the compute?
-@register_compute(conv2d_partial_im2col, data='NHWC', kernel='OIHW')
-def _compute(data, kernel, strides, padding, out_dtype, im2col_batch_size):
+
+@autotvm.register_topi_compute(conv2d, 'micro_dev', ['partial_im2col'])
+def conv2d_partial_im2col_simd_compute(cfg, data, kernel, strides, padding, dilation, layout, out_dtype):
     assert isinstance(strides, int) or len(strides) == 2
+    assert isinstance(dilation, int) or len(dilation) == 2
+    assert layout == 'NHWC'
 
     if isinstance(strides, int):
         stride_h = stride_w = strides
@@ -48,13 +63,15 @@ def _compute(data, kernel, strides, padding, out_dtype, im2col_batch_size):
 
     _, PDH, PDW, _ = padded_data.shape
 
+    assert False, 'need to incorp i2c_batch_size into the config'
     assert ((HO.value * WO.value) % im2col_batch_size) == 0, 'im2col batch size must be a factor of width x height'
     num_im2col_batches = (HO * WO) // im2col_batch_size
     K = CI * KH * KW
 
-    # TODO reshapes fuck everything, so we need to manually fold in reshape
-    # into our index calculations. figure out how to fix that, because that is
-    # *shit* functionality.
+    # TODO reshapes fuck everything. for whatever reason, the compiler can't
+    # reason through reshapes, so we need to manually fold in reshape into our
+    # index calculations. figure out how to fix that, because that is *shit*
+    # functionality.
 
     #im2col_data = tvm.compute(
     #        (N, HO, WO, CI, KH, KW),
@@ -72,7 +89,7 @@ def _compute(data, kernel, strides, padding, out_dtype, im2col_batch_size):
     # ky = ((kk % (KH * KW)) // KW)
     # kx = ((kk % (KH * KW)) % KW)
 
-    # TODO simultaneously expand to int16 for SIMD stuff
+    # TODO simultaneously expand to int16 for SIMD stuff (would then match CMSIS-NN more closely)
     im2col_data = tvm.compute(
             (N, num_im2col_batches, im2col_batch_size, K),
             lambda nn, i2c_batch, i2c_batch_idx, kk:
@@ -115,7 +132,7 @@ def _compute(data, kernel, strides, padding, out_dtype, im2col_batch_size):
     return data, kernel, reshaped_conv
 
 
-@register_schedule(conv2d_partial_im2col, data='NHWC', kernel='OIHW')
+@autotvm.register_topi_schedule(schedule_conv2d_nhwc, 'micro_dev', ['partial_im2col'])
 def _schedule(data, kernel, reshaped_conv):
     sched = tvm.create_schedule(reshaped_conv.op)
 

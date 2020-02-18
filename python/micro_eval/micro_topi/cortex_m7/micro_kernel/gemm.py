@@ -1,3 +1,6 @@
+import random
+import string
+
 import tvm
 
 ##########################
@@ -6,6 +9,16 @@ import tvm
 
 # NOTE this is transposed matmul (A * B^T)
 def intrin_gemm_MxKxN(M, K, N, in_dtype, out_dtype):
+    # we generate a unique ID for every intrinsic definition, to prevent name
+    # collisions in the generated source (e.g., if there are multiple operators
+    # in the same module that use the same intrinsic)
+    #
+    # TODO to cut down on memory usage, we should cache each intrinsic
+    # instantiation and include it only once, eliminating the need for unique
+    # IDs
+    UNIQ_ID_LEN = 8
+    uniq_id = ''.join(random.choices(string.ascii_uppercase, k=UNIQ_ID_LEN))
+
     if isinstance(M, tvm.expr.IntImm):
         M = M.value
     if isinstance(K, tvm.expr.IntImm):
@@ -40,7 +53,7 @@ def intrin_gemm_MxKxN(M, K, N, in_dtype, out_dtype):
         cc = outs[0]
         def _reduce_update():
             ib = tvm.ir_builder.create()
-            ib.emit(tvm.call_extern("int32", f"gemm_{M}x{K}x{N}_update",
+            ib.emit(tvm.call_extern("int32", f"gemm_{M}x{K}x{N}_update_{uniq_id}",
                                     aa.access_ptr("r"),
                                     bb.access_ptr("r"),
                                     cc.access_ptr("w"),
@@ -50,7 +63,7 @@ def intrin_gemm_MxKxN(M, K, N, in_dtype, out_dtype):
             return ib.get()
         def _reduce_reset():
             ib = tvm.ir_builder.create()
-            ib.emit(tvm.call_extern("int32", f"gemm_{M}x{K}x{N}_reset",
+            ib.emit(tvm.call_extern("int32", f"gemm_{M}x{K}x{N}_reset_{uniq_id}",
                                     cc.access_ptr("w"),
                                     cc.strides[0]))
             return ib.get()
@@ -70,7 +83,7 @@ def intrin_gemm_MxKxN(M, K, N, in_dtype, out_dtype):
             #                         aa.strides[0],
             #                         bb.strides[0],
             #                         cc.strides[0]))
-            ib.emit(tvm.call_extern("int32", f"gemm_{M}x{K}x{N}_body",
+            ib.emit(tvm.call_extern("int32", f"gemm_{M}x{K}x{N}_body_{uniq_id}",
                                     aa.access_ptr("r"),
                                     bb.access_ptr("r"),
                                     cc.access_ptr("w"),
@@ -80,10 +93,12 @@ def intrin_gemm_MxKxN(M, K, N, in_dtype, out_dtype):
             return ib.get()
         return _body(), _reduce_reset(), _reduce_update()
     with tvm.build_config(offset_factor=1):
-        return tvm.decl_tensor_intrin(C.op, intrin_func, binds={A: A_buf, B: B_buf, C: C_buf})
+        intrin_decl = tvm.decl_tensor_intrin(
+            C.op, intrin_func, binds={A: A_buf, B: B_buf, C: C_buf})
+        return intrin_decl, uniq_id
 
 
-def gemm_MxKxN_impl(M, K, N):
+def gemm_MxKxN_impl(M, K, N, uniq_id):
     # TODO are there any SIMD tricks to zero out arrays quickly?
     aa_pad_size = M * K
     bb_pad_size = N * K
@@ -92,7 +107,7 @@ def gemm_MxKxN_impl(M, K, N):
 #ifdef __cplusplus
 extern "C"
 #endif
-__STATIC_FORCEINLINE int32_t gemm_{M}x{K}x{N}_body(
+__STATIC_FORCEINLINE int32_t gemm_{M}x{K}x{N}_body_{uniq_id}(
     int8_t *aa, int8_t *bb, int32_t *cc,
     int A_stride, int B_stride, int C_stride) {{
   int16_t aa_pad[{aa_pad_size}];
@@ -132,7 +147,7 @@ __STATIC_FORCEINLINE int32_t gemm_{M}x{K}x{N}_body(
 #ifdef __cplusplus
 extern "C"
 #endif
-__STATIC_FORCEINLINE int32_t gemm_{M}x{K}x{N}_update(
+__STATIC_FORCEINLINE int32_t gemm_{M}x{K}x{N}_update_{uniq_id}(
     int8_t *aa, int8_t *bb, int32_t *cc,
     int A_stride, int B_stride, int C_stride) {{
   int16_t aa_pad[{aa_pad_size}];
@@ -169,7 +184,7 @@ __STATIC_FORCEINLINE int32_t gemm_{M}x{K}x{N}_update(
 #ifdef __cplusplus
 extern "C"
 #endif
-__STATIC_FORCEINLINE int32_t gemm_{M}x{K}x{N}_reset(int32_t *cc, int C_stride) {{
+__STATIC_FORCEINLINE int32_t gemm_{M}x{K}x{N}_reset_{uniq_id}(int32_t *cc, int C_stride) {{
   for (int i = 0; i < {M}; i++) {{
     for (int j = 0; j < {N}; j++) {{
       cc[i*C_stride + j] = 0;

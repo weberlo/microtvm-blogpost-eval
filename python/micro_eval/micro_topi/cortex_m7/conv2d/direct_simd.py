@@ -7,9 +7,6 @@ from topi.generic.nn import schedule_conv2d_nhwc
 from topi.nn.util import get_pad_tuple
 from tvm.autotvm.task.topi_integration import deserialize_args
 
-from micro_eval.micro_topi import (
-        op_decl, register_compute, register_schedule
-)
 from micro_eval.micro_topi.cortex_m7.micro_kernel.gemm import (
         intrin_gemm_MxKxN, gemm_MxKxN_impl,
 )
@@ -129,9 +126,9 @@ def conv2d_direct_simd_nhwc_schedule(cfg, outs):
 
         cfg['reorder_0_simd'].apply(sched, conv, [n, oh, owo, owi, coo, coi, kh, kw, cio, cii])
 
-        gemm = intrin_gemm_MxKxN(M, K, N, data_vec.dtype, output.dtype)
+        gemm, uniq_id = intrin_gemm_MxKxN(M, K, N, data_vec.dtype, output.dtype)
         sched[output].tensorize(owi, gemm)
-        sched[output].pragma(n, 'import_c', gemm_MxKxN_impl(M, K, N))
+        sched[output].pragma(n, 'import_c', gemm_MxKxN_impl(M, K, N, uniq_id))
         # elif 'reorder_0' in cfg:
         #     # NOTE we can't inline data padding in the SIMD path, because it
         #     # introduces conditionals in the inner loop.

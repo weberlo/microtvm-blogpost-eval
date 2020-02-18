@@ -179,15 +179,13 @@ def relay_micro_build(func, dev_config, target, params=None, lib_include_paths=N
 
     """
     with relay.build_config(opt_level=3, disabled_pass={"AlterOpLayout"}):
-       with tvm.build_config(disable_vectorize=True):
-           graph, c_mod, params = relay.build(func, target=target, params=params)
-    # with relay.build_config(opt_level=3):
-    #     graph, c_mod, params = relay.build(func, target=target, params=params)
-    print(c_mod.get_source())
+        with tvm.build_config(disable_vectorize=True):
+            graph, c_mod, params = relay.build(func, target=target, params=params)
     micro_mod = micro.create_micro_mod(c_mod, dev_config, lib_include_paths=lib_include_paths)
     ctx = tvm.micro_dev(0)
     if DEBUG_MODE:
-        mod = debug_runtime.create(graph, micro_mod, ctx, dump_root='/home/lweber/microtvm-blogpost-eval/debug/micro')
+        dump_root = f'{os.path.dirname(__file__)}/../../debug/micro'
+        mod = debug_runtime.create(graph, micro_mod, ctx, dump_root=dump_root)
     else:
         mod = graph_runtime.create(graph, micro_mod, ctx)
     mod.set_input(**params)
@@ -228,10 +226,10 @@ def gen_workload_desc_from_task(task):
     return workload
 
 
-def tuplify(elem):
+def deep_tuple(elem):
     """Recursively convert all lists in `elem` into tuples."""
     if isinstance(elem, list):
-        return tuple(list(map(tuplify, elem)))
+        return tuple(list(map(deep_tuple, elem)))
     else:
         return elem
 
@@ -243,7 +241,7 @@ def custom_pick_best(in_log_file_name, out_log_file_name, top_k=1):
             entry = json.loads(line)
             workload = gen_workload_desc_from_task(entry['i'])
             entry['i'][4] = workload
-            hashable_workload = tuplify(workload)
+            hashable_workload = deep_tuple(workload)
             if hashable_workload not in workload_to_best:
                 workload_to_best[hashable_workload] = []
 

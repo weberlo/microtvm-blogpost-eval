@@ -10,8 +10,11 @@ from mxnet.gluon.data.vision import transforms
 import numpy as np
 
 import tvm
+from tvm import autotvm
+from tvm.autotvm.task.space import FallbackConfigEntity
 from tvm.contrib import graph_runtime, util
 from tvm import relay
+from tvm.relay import ExprVisitor
 import tvm.micro as micro
 from tvm import autotvm
 from tvm.micro import create_micro_mod
@@ -26,13 +29,15 @@ from micro_eval.util import (
     relay_micro_build,
     eval_cpu_graph_runtime, eval_relay_intrp,
     NamedTensor, NamedType, BakedType,
+    deep_tuple,
     reset_gdbinit, get_comm_overhead
 )
+from micro_eval.micro_topi import ManualConfigContext, ManualConfigSpace
 from micro_eval.micro_topi.cortex_m7.conv2d.direct import (
-    conv2d_direct_nhwc_compute, conv2d_direct_nhwc_schedule
+    conv2d_direct_compute, conv2d_direct_nhwc_schedule, conv2d_direct_template
 )
 from micro_eval.micro_topi.cortex_m7.conv2d.direct_simd import (
-    conv2d_direct_simd_nhwc_compute, conv2d_direct_simd_nhwc_schedule
+    conv2d_direct_simd_compute, conv2d_direct_simd_nhwc_schedule
 )
 # import micro_eval.micro_topi.cortex_m7.conv2d.partial_im2col
 from micro_eval.model.cifar10_cnn import gen_cifar10_cnn
@@ -81,7 +86,7 @@ def get_sample_points(n):
 #     #     s = topi.generic.schedule_conv2d_hwcn([C])
 #     return sched, [data, kernel, conv]
 
-autotvm.task.register(conv2d_direct_nhwc_template, "topi_nn_conv2d", override=True)
+autotvm.task.register(conv2d_direct_template, "topi_nn_conv2d", override=True)
 
 ################
 # CMSIS CONFIG #
@@ -113,7 +118,7 @@ CMSIS_SRC_PATHS = [
 CIFAR10_CLASSES = ['Plane', 'Car', 'Bird', 'Cat', 'Deer', 'Dog', 'Frog', 'Horse', 'Ship', 'Truck']
 NUM_SAMPLES = 10
 
-USE_TUNED_SCHEDULES = True
+USE_TUNED_SCHEDULES = False
 USE_RANDOM_PARAMS = True
 
 def eval_cmsis(samples, time_overhead, cycle_overhead):
@@ -183,6 +188,61 @@ def eval_cmsis(samples, time_overhead, cycle_overhead):
                 f.write(f'  Actual was {label}\n')
 
 
+def gen_model_config(mod):
+    class ConvCollector(ExprVisitor):
+        def __init__(self):
+            super(ConvCollector, self).__init__()
+            self.convs = []
+
+        def visit_call(self, call):
+            if isinstance(call.op, relay.op.op.Op) and 'conv2d' in call.op.name:
+                data_type = call.args[0].checked_type
+                data_ser = list(get_const_tuple(data_type.shape)) + [data_type.dtype]
+                kernel_type = call.args[1].checked_type
+                kernel_ser = list(get_const_tuple(kernel_type.shape)) + [kernel_type.dtype]
+                serialized_attrs = [
+                    call.attrs[key]
+                    for key in ['strides', 'padding', 'dilation', 'data_layout', 'out_dtype']]
+                for i, attr in enumerate(serialized_attrs):
+                    if isinstance(attr, tvm.container.Array):
+                        serialized_attrs[i] = get_const_tuple(attr)
+                workload = ['conv2d'] + [data_ser] + [kernel_ser] + serialized_attrs
+                # prepend the workload, because the traversal order is from the
+                # end of the network to the beginning
+                self.convs = [deep_tuple(workload)] + self.convs
+            for arg in call.args:
+                self.visit(arg)
+
+    collector = ConvCollector()
+    collector.visit(mod['main'])
+    convs = collector.convs
+
+    def gen_direct_simd_cfg(M, K, N):
+        from tvm.autotvm.task.space import ReorderEntity, SplitEntity, OtherOptionEntity
+        cfg = ManualConfigSpace()
+        cfg.template_key = 'direct_simd'
+        cfg['tile_ow'] = SplitEntity([-1, M])
+        cfg['tile_ci'] = SplitEntity([-1, K])
+        cfg['tile_co'] = SplitEntity([-1, N])
+        # TODO we shouldn't need to mirror the order of the axes
+        # specified in the config space definition to mock a reordering
+        # here
+        reorder_base = ['n', 'oh', 'owo', 'owi', 'coo', 'coi', 'kh', 'kw', 'cio', 'cii']
+        reorder_target = ['n', 'oh', 'kh', 'kw', 'owo', 'coo', 'cio', 'owi', 'coi', 'cii']
+        cfg['reorder_0_simd'] = ReorderEntity(
+            [reorder_base.index(axis) for axis in reorder_target])
+        cfg['auto_unroll_max_step'] = OtherOptionEntity(0)
+        cfg['unroll_explicit'] = OtherOptionEntity(0)
+        return cfg
+
+    assert len(convs) == 3
+    result = {}
+    result[(TARGET, convs[0])] = FallbackConfigEntity()
+    result[(TARGET, convs[1])] = gen_direct_simd_cfg(8, 32, 8)
+    result[(TARGET, convs[2])] = gen_direct_simd_cfg(8, 32, 8)
+    return result
+
+
 def eval_micro(samples, time_overhead, cycle_overhead):
     DEV_CONFIG = stm32f746xx.default_config('127.0.0.1', 6666)
     DEV_CONFIG['mem_layout'] = stm32f746xx.gen_mem_layout(OrderedDict([
@@ -198,41 +258,45 @@ def eval_micro(samples, time_overhead, cycle_overhead):
         ]))
     reset_gdbinit(DEV_CONFIG)
 
-    DATA_LAYOUT = 'NHWC'
-    KERNEL_LAYOUT = 'HWIO'
-    # DATA_LAYOUT = 'NCHW'
-    # KERNEL_LAYOUT = 'HWOI'
     USE_SIMD = True
+    if USE_SIMD:
+        DATA_LAYOUT = 'NHWC'
+        # don't use SIMD layout in the first layer
+        KERNEL_LAYOUTS = ['HWIO', 'HWOI', 'HWOI']
+    else:
+        DATA_LAYOUT = 'NHWC'
+        KERNEL_LAYOUTS = 'HWIO'
+
+    DEVICE_ID = 'arm.stm32f746xx'
+    # E2E_LOG_FILE_NAME = f'{DEVICE_ID}.e2e.log'
+    E2E_LOG_FILE_NAME = f'autotvm_logs/pre_simd/{DEVICE_ID}.e2e.log.manually_fixed'
 
     mod, params = gen_cifar10_cnn(
-        DATA_LAYOUT, KERNEL_LAYOUT,
+        DATA_LAYOUT, KERNEL_LAYOUTS,
         USE_SIMD,
         USE_RANDOM_PARAMS)
-    # Begin a session
+    model_config = gen_model_config(mod)
     print('[Initting]')
     with micro.Session(DEV_CONFIG) as sess:
-        # Build the function
         print('[Building]')
-        from tvm import autotvm
-        DEVICE_ID = 'arm.stm32f746xx'
-        # E2E_LOG_FILE_NAME = f'{DEVICE_ID}.e2e.log'
-        E2E_LOG_FILE_NAME = f'autotvm_logs/pre_simd/{DEVICE_ID}.e2e.log.manually_fixed'
-        assert False, 'pull the direct SIMD fallback config into micro_topi'
-        import pdb; pdb.set_trace()
         def build_graph_mod():
             return relay_micro_build(
                 mod['main'],
                 DEV_CONFIG, TARGET,
                 params=params,
                 lib_include_paths=CMSIS_INCLUDE_PATHS)
+
         with TARGET:
             if USE_TUNED_SCHEDULES:
-                #assert False, "will apply history best use the best in the log file? can we have multiple entries for the same workload?"
                 with autotvm.apply_history_best(E2E_LOG_FILE_NAME):
                     graph_mod = build_graph_mod()
                     log_file_name = 'micro_tuned_results.txt'
             else:
-                graph_mod = build_graph_mod()
+                if USE_SIMD:
+                    with ManualConfigContext(model_config):
+                        graph_mod = build_graph_mod()
+                else:
+                    graph_mod = build_graph_mod()
                 log_file_name = 'micro_untuned_results.txt'
 
         with open(log_file_name, 'w') as f:
@@ -246,7 +310,7 @@ def eval_micro(samples, time_overhead, cycle_overhead):
 
                 assert data_np.shape == get_const_tuple(mod['main'].params[0].checked_type.shape)
 
-                # Execute with `image` as the input.
+                # execute with `image` as the input
                 print('[Executing]')
                 sess.get_last_batch_time()
                 sess.get_last_batch_cycles()
@@ -258,15 +322,13 @@ def eval_micro(samples, time_overhead, cycle_overhead):
                 exec_cycles = sess.get_last_batch_cycles() - cycle_overhead
                 f.write(f'  Model execution took {exec_time} milliseconds and {exec_cycles} cycles\n')
 
-                # Get output
+                # get output
                 micro_output_np = graph_mod.get_output(0).asnumpy()
                 f.write(f'  Output: {micro_output_np}\n')
                 prediction = CIFAR10_CLASSES[np.argmax(micro_output_np)]
                 label = CIFAR10_CLASSES[label]
                 f.write(f'  Prediction was {prediction}\n')
                 f.write(f'  Actual was {label}\n')
-                #print('BREAKING EARLY')
-                #break
 
 
 def load_outputs(path):
@@ -339,7 +401,6 @@ def main():
             print(micro_val)
             input('========================================')
 
-    assert False, "might need to add ops to topi_integration and relay_integration python files"
     assert False, "merge conv2d simd_v0 tuning results with e2e simd results"
 
     #if micro_eval.util.DEBUG_MODE:

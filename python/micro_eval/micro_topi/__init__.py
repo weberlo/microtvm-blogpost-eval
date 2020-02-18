@@ -5,103 +5,58 @@ import tvm
 from tvm.autotvm.task.topi_integration import TaskExtractEnv
 
 from micro_eval.util import NamedType, BakedType
+from tvm.autotvm.task.dispatcher import DispatchContext
+from tvm.autotvm.task.space import ConfigSpace
 
 # init autotvm env to register uTVM ops
 TaskExtractEnv()
 
-def op_decl(in_tensors=None):
-    def _inner_decorator(orig_func):
-        assert in_tensors is not None, f'operator `{orig_func.__name__}` must have input tensors'
-        # set up layout registry
-        double_decl_err_str = f'`{orig_func.__name__}` has already been declared'
-        assert not hasattr(orig_func, 'compute_funcs'), double_decl_err_str
-        assert not hasattr(orig_func, 'schedule_funcs'), double_decl_err_str
-        assert not hasattr(orig_func, 'input_tensors'), double_decl_err_str
-        orig_func.compute_funcs = {}
-        orig_func.schedule_funcs = {}
+class ManualConfigContext(DispatchContext):
+    """Apply a manually-generated config entity for each workload.
 
-        arg_names = inspect.getfullargspec(orig_func).args
-        # trim off `compute_func` and `schedule_func` from arg names, since the
-        # user doesn't supply them (the decorator does so via dispatch)
-        arg_names = arg_names[2:]
-        for tensor in in_tensors:
-            assert tensor in arg_names
-        orig_func.input_tensors = in_tensors
+    Parameters
+    ----------
+    query_to_config : Dict[Tuple[str, str], ConfigSpace]
+        Mapping from (target, workload) to the corresponding config.
+    """
+    def __init__(self, query_to_config):
+        super(ManualConfigContext, self).__init__()
+        if isinstance(query_to_config, dict):
+            self._query_to_config = query_to_config
+        else:
+            # when a single config space is passed, it is assumed we are in a
+            # single-op setting, where the target and workload are both set to
+            # `None` on dispatch.
+            self._query_to_config = {(None, None): query_to_config}
 
-        @functools.wraps(orig_func)
-        def _wrapper(*args, **kwargs):
-            new_args = []
-            layout_dict = {}
-            for arg, arg_name in zip(args, arg_names):
-                # replace tensor types with TVM placeholders
-                assert not isinstance(arg, NamedType), 'shape must have a set layout'
-                if isinstance(arg, BakedType):
-                    shape = arg
-                    assert arg_name in orig_func.input_tensors, f'unexpected input tensor `{arg_name}`'
-                    arg_typ, arg_shape, arg_dtype = shape.gen_spec()
-                    assert arg_typ == 'TENSOR'
-                    arg = tvm.placeholder(arg_shape, name=arg_name, dtype=arg_dtype)
-                    layout_dict[arg_name] = shape.layout
-                elif isinstance(arg, tuple) and arg[0] == 'TENSOR' and arg_name in in_tensors:
-                    raise RuntimeError(
-                        f'arg `{arg_name} := {arg}` is already expanded to a spec. Must pass a (NamedType, layout str) pair')
-                new_args.append(arg)
-
-            # dispatch to compute/schedule funcs that match the layout signature
-            layout_signature = _gen_layout_signature(layout_dict, orig_func.input_tensors)
-            assert layout_signature in orig_func.compute_funcs, f'no supported compute func for operator `{orig_func.__name__}` with layout configuration {layout_signature}'
-            compute_func = orig_func.compute_funcs[layout_signature]
-            assert layout_signature in orig_func.schedule_funcs, f'no supported schedule func for operator `{orig_func.__name__}` with layout configuration {layout_signature}'
-            schedule_func = orig_func.schedule_funcs[layout_signature]
-            # prepend compute/schedule funcs to original args
-            new_args = [compute_func, schedule_func] + new_args
-
-            return orig_func(*new_args, **kwargs)
-        return _wrapper
-    return _inner_decorator
+    def _query_inside(self, target, workload):
+        key = (target, workload)
+        assert key in self._query_to_config, f'unknown query `{key}` encountered'
+        return self._query_to_config[key]
 
 
-def _gen_layout_signature(layout_dict, input_tensors):
-    if len(layout_dict) != len(input_tensors):
-        missing_tensors = []
-        for input_tensor in input_tensors:
-            if input_tensor not in layout_dict:
-                missing_tensors.append(input_tensor)
-        raise RuntimeError(f'missing the following input tensors: {missing_tensors}')
+class ManualConfigSpace(ConfigSpace):
+    """Use as the argument to `with ApplyConfig(...)` to use a deterministic op config"""
 
-    layout_signature = []
-    for name in input_tensors:
-        assert name in layout_dict
-        layout_signature.append(layout_dict[name])
-    return tuple(layout_signature)
+    def __init__(self):
+        super(ManualConfigSpace, self).__init__()
+        self.is_fallback = False
+        # NOTE most important part of this class: we don't want to be in
+        # collection mode, because the config the user specifies would then be
+        # overwritten by a fallback config.
+        self._collect = False
 
+    def __setitem__(self, name, entity):
+        """set the entity(knob) of by name
 
-def _register_layout(func_type_str, base_op_func, **layout_dict):
-    """Route layouts with the specified signature to the compute/schedule func being decorated."""
-    assert func_type_str in ['compute', 'schedule']
-    def _inner_decorator(func):
-        layout_signature = _gen_layout_signature(layout_dict, base_op_func.input_tensors)
-        dispatch_dict = getattr(base_op_func, f'{func_type_str}_funcs')
-        assert layout_signature not in dispatch_dict
-        dispatch_dict[layout_signature] = func
-        return func
-    return _inner_decorator
+        Parameters
+        ----------
+        name: str
+            name of the entity
+        entity: SplitEntity, ReorderEntity, AnnotateEntity, OtherOptionEntity
+            value of the entity
+        """
+        self._entity_map[name] = entity
 
-
-def register_compute(base_op_func, **layouts):
-    return _register_layout('compute', base_op_func, **layouts)
-
-
-# TODO automatically generate a `_callback` and call `traverse_inline` for scheds
-def register_schedule(base_op_func, **layouts):
-    return _register_layout('schedule', base_op_func, **layouts)
-
-
-def register_dev_tuning_tasks():
-   autotvm.register_topi_compute(
-           conv2d_arm_micro_nchw, 'micro_dev', ['direct'])
-   autotvm.register_topi_schedule(
-           schedule_conv2d_arm_micro_nchw, 'micro_dev', ['direct'])
-
-   #autotvm.template(conv2d_arm_micro_nchw_template)
-   autotvm.task.register(conv2d_arm_micro_nchw_template, "topi_nn_conv2d", override=True)
+    def __repr__(self):
+        return "(%s, %s, %s)" % (str(self._entity_map)[12:-1], self.template_key, self.code_hash)

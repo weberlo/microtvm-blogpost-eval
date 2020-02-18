@@ -28,10 +28,7 @@ from tvm.micro import create_micro_mod
 from tvm.relay.testing import resnet
 from tvm.relay import transform
 from tvm.relay import create_executor
-from tvm.autotvm.task.dispatcher import FallbackContext, ApplyConfig
-from tvm.autotvm.task.space import (
-    FallbackConfigEntity, ConfigEntity, ReorderEntity, SplitEntity, OtherOptionEntity
-)
+from tvm.autotvm.task.space import ReorderEntity, SplitEntity, OtherOptionEntity
 
 from topi.util import get_const_tuple
 from topi.nn.util import get_const_int, get_pad_tuple
@@ -56,6 +53,7 @@ from micro_eval.micro_topi.cortex_m7.micro_kernel.gemm import (
 from micro_eval.micro_topi.cortex_m7.conv2d.direct import conv2d_direct
 from micro_eval.micro_topi.cortex_m7.conv2d.direct_simd import conv2d_direct_simd
 # from micro_eval.micro_topi.cortex_m7.conv2d.partial_im2col import conv2d_partial_im2col
+from micro_eval.micro_topi import ManualConfigContext, ManualConfigSpace
 
 from tvm.micro.device.arm import stm32f746xx
 from tvm.micro.device.arm.stm32f746xx import MemConstraint
@@ -226,26 +224,13 @@ def eval_direct(sess, data_nt, kernel_nt):
     return results
 
 
-# TODO it seems like this is the wrong way to specify a deterministic config
-# for a template. what is the right way?
-class DirectSimdConfig(autotvm.FallbackContext):
-    def __init__(self, M, K, N):
-        super(DirectSimdConfig, self).__init__()
-        self.M = M
-        self.K = K
-        self.N = N
-
-    def _query_inside(self, target, workload):
-        key = (target, workload)
-        if key in self.memory:
-            return self.memory[key]
-        cfg = FallbackConfigEntity()
-        cfg._collect = False
-        cfg.is_fallback = False
+def eval_direct_simd(sess, data_nt, kernel_nt):
+    def gen_direct_simd_cfg(M, K, N):
+        cfg = ManualConfigSpace()
         cfg.template_key = 'direct_simd'
-        cfg['tile_ow'] = SplitEntity([-1, self.M])
-        cfg['tile_ci'] = SplitEntity([-1, self.K])
-        cfg['tile_co'] = SplitEntity([-1, self.N])
+        cfg['tile_ow'] = SplitEntity([-1, M])
+        cfg['tile_ci'] = SplitEntity([-1, K])
+        cfg['tile_co'] = SplitEntity([-1, N])
         # TODO we shouldn't need to mirror the order of the axes
         # specified in the config space definition to mock a reordering
         # here
@@ -255,11 +240,8 @@ class DirectSimdConfig(autotvm.FallbackContext):
             [reorder_base.index(axis) for axis in reorder_target])
         cfg['auto_unroll_max_step'] = OtherOptionEntity(0)
         cfg['unroll_explicit'] = OtherOptionEntity(0)
-        self.memory[key] = cfg
         return cfg
 
-
-def eval_direct_simd(sess, data_nt, kernel_nt):
     results = []
     DATA_LAYOUT = 'NHWC'
     KERNEL_LAYOUT = 'HWOI'
@@ -269,7 +251,7 @@ def eval_direct_simd(sess, data_nt, kernel_nt):
     out_type = OUT_TYPE.with_layout(DATA_LAYOUT)
     # TODO autogen candidates?
     for (M, K, N) in [(1, 4, 1), (2, 4, 2), (4, 4, 4)]:
-        with DirectSimdConfig(M, K, N), TARGET:
+        with ManualConfigContext(gen_direct_simd_cfg(M, K, N)), TARGET:
             sched, arg_bufs = conv2d_direct_simd(
                 data_nt.typ.serialize(), kernel_nt.typ.serialize(),
                 STRIDES, PADDING, DILATION, DATA_LAYOUT, OUT_DTYPE)
@@ -324,17 +306,17 @@ def main():
 # """
 #         )
 
-        # direct w/o SIMD
-        [default_nchw_time, default_nhwc_time] = eval_direct(sess, data_nt, kernel_nt)
-        all_results.append(
-f"""
-##########
-# DIRECT #
-##########
-  NCHW time: {default_nchw_time}
-  NHWC time: {default_nhwc_time}
-"""
-        )
+#         # direct w/o SIMD
+#         [default_nchw_time, default_nhwc_time] = eval_direct(sess, data_nt, kernel_nt)
+#         all_results.append(
+# f"""
+# ##########
+# # DIRECT #
+# ##########
+#   NCHW time: {default_nchw_time}
+#   NHWC time: {default_nhwc_time}
+# """
+#         )
 
         # direct w/ SIMD
         direct_simd_results = eval_direct_simd(sess, data_nt, kernel_nt)
