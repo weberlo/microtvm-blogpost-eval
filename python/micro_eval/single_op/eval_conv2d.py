@@ -52,7 +52,7 @@ from micro_eval.micro_topi.cortex_m7.micro_kernel.gemm import (
 )
 from micro_eval.micro_topi.cortex_m7.conv2d.direct import conv2d_direct
 from micro_eval.micro_topi.cortex_m7.conv2d.direct_simd import conv2d_direct_simd
-# from micro_eval.micro_topi.cortex_m7.conv2d.partial_im2col import conv2d_partial_im2col
+from micro_eval.micro_topi.cortex_m7.conv2d.partial_im2col_simd import conv2d_partial_im2col_simd
 from micro_eval.micro_topi import ManualConfigContext, ManualConfigSpace
 
 from tvm.micro.device.arm import stm32f746xx
@@ -83,12 +83,12 @@ TIME_OVERHEAD, CYCLE_OVERHEAD = 0.0, 0
 ###############
 # CONV CONFIG #
 ###############
-# N, H, W, CO, CI = 1, 16, 16, 32, 32
-# KH, KW = 5, 5
-# STRIDES, PADDING, DILATION = (1, 1), 2, 1
-N, H, W, CO, CI = 1, 8, 8, 4, 4
-KH, KW = 3, 3
-STRIDES, PADDING, DILATION = (1, 1), 1, 1
+N, H, W, CO, CI = 1, 16, 16, 32, 32
+KH, KW = 5, 5
+STRIDES, PADDING, DILATION = (1, 1), 2, 1
+# N, H, W, CO, CI = 1, 8, 8, 4, 4
+# KH, KW = 3, 3
+# STRIDES, PADDING, DILATION = (1, 1), 1, 1
 IN_DTYPE = 'int8'
 OUT_DTYPE = 'int32'
 
@@ -109,7 +109,6 @@ BIAS_TYPE = BakedType([('B', CO)], dtype=IN_DTYPE)
 ################
 NUM_TRIALS = 15
 # NUM_TRIALS = 1
-NUM_BATCH_SIZE_CANDIDATES = 5
 
 ##############
 # EVALUATION #
@@ -256,7 +255,6 @@ def eval_direct_simd(sess, data_nt, kernel_nt):
                 data_nt.typ.serialize(), kernel_nt.typ.serialize(),
                 STRIDES, PADDING, DILATION, DATA_LAYOUT, OUT_DTYPE)
         c_mod = tvm.build(sched, arg_bufs, target=TARGET, name='conv2d')
-        print(c_mod.get_source())
         time = eval_micro(sess, c_mod, data_nt, kernel_nt, out_type)
         time -= TIME_OVERHEAD
         results.append(((M, K, N), time))
@@ -264,7 +262,13 @@ def eval_direct_simd(sess, data_nt, kernel_nt):
 
 
 def eval_partial_im2col_simd(sess, data_nt, kernel_nt):
-    results = []
+    def gen_partial_im2col_simd_cfg(im2col_batch_size):
+        cfg = ManualConfigSpace()
+        cfg.template_key = 'partial_im2col'
+        cfg['im2col_batch_size'] = OtherOptionEntity(im2col_batch_size)
+        return cfg
+
+    NUM_BATCH_SIZE_CANDIDATES = 3
     max_batch_size = H * W
     # use the first NUM_BATCH_SIZE_CANDIDATES factors of the max batch size
     batch_sizes = [i for i in range(1, max_batch_size+1) if max_batch_size % i == 0]
@@ -276,11 +280,13 @@ def eval_partial_im2col_simd(sess, data_nt, kernel_nt):
     data_nt = data_nt.with_layout(DATA_LAYOUT)
     kernel_nt = kernel_nt.with_layout(KERNEL_LAYOUT)
     out_type = OUT_TYPE.with_layout(DATA_LAYOUT)
+
+    results = []
     for i2c_batch_size in batch_sizes:
-        sched, arg_bufs = conv2d_partial_im2col(
-                data_nt.typ, kernel_nt.typ,
-                STRIDES, PADDING, OUT_DTYPE,
-                i2c_batch_size)
+        with ManualConfigContext(gen_partial_im2col_simd_cfg(i2c_batch_size)), TARGET:
+            sched, arg_bufs = conv2d_partial_im2col_simd(
+                    data_nt.typ.serialize(), kernel_nt.typ.serialize(),
+                    STRIDES, PADDING, DILATION, DATA_LAYOUT, OUT_DTYPE)
         c_mod = tvm.build(sched, arg_bufs, target=TARGET, name='conv2d')
         time = eval_micro(sess, c_mod, data_nt, kernel_nt, out_type)
         time -= TIME_OVERHEAD
@@ -295,28 +301,27 @@ def main():
     kernel_nt = KERNEL_TYPE.gen_rand_tensor(-3, 3)
     all_results = []
     with micro.Session(DEV_CONFIG) as sess:
-#         # CMSIS-NN
-#         cmsis_results = eval_cmsis(sess, data_nt, kernel_nt, CMSIS_OUT_TYPE)
-#         all_results.append(
-# f"""
-# ############
-# # CMSIS-NN #
-# ############
-# {cmsis_results}
-# """
-#         )
+        # CMSIS-NN
+        cmsis_results = eval_cmsis(sess, data_nt, kernel_nt, CMSIS_OUT_TYPE)
+        all_results.append(
+f"""
+############
+# CMSIS-NN #
+############
+{cmsis_results}
+"""
+        )
 
-#         # direct w/o SIMD
-#         [default_nchw_time, default_nhwc_time] = eval_direct(sess, data_nt, kernel_nt)
-#         all_results.append(
-# f"""
-# ##########
-# # DIRECT #
-# ##########
-#   NCHW time: {default_nchw_time}
-#   NHWC time: {default_nhwc_time}
-# """
-#         )
+        # direct w/o SIMD
+        [default_nchw_time, default_nhwc_time] = eval_direct(sess, data_nt, kernel_nt)
+        all_results.append(
+f"""
+##########
+# DIRECT #
+##########
+  NCHW time: {default_nchw_time}
+  NHWC time: {default_nhwc_time}
+""")
 
         # direct w/ SIMD
         direct_simd_results = eval_direct_simd(sess, data_nt, kernel_nt)
@@ -329,22 +334,19 @@ f"""
   small time: {small_direct_simd_time}
   medium time: {medium_direct_simd_time}
   large time: {large_direct_simd_time}
-"""
-        )
+""")
 
-    # TODO repair partial im2col
-#         # partial im2col w/ SIMD
-#         partial_im2col_simd_results = eval_partial_im2col_simd(sess, data_nt, kernel_nt)
-#         i2c_report = [
-# f"""
-# ######################
-# # IM2COL CONV + SIMD #
-# ######################""".strip()
-#         ]
-#         for (batch_size, i2c_simd_time) in partial_im2col_simd_results:
-#             i2c_report.append(f'  batch of {batch_size} time: {i2c_simd_time}')
-#         i2c_report = '\n'.join(i2c_report)
-#         all_results.append(i2c_report)
+        # partial im2col w/ SIMD
+        partial_im2col_simd_results = eval_partial_im2col_simd(sess, data_nt, kernel_nt)
+        i2c_report = [
+f"""
+######################
+# IM2COL CONV + SIMD #
+######################""".strip()]
+        for (batch_size, i2c_simd_time) in partial_im2col_simd_results:
+            i2c_report.append(f'  batch of {batch_size} time: {i2c_simd_time}')
+        i2c_report = '\n'.join(i2c_report)
+        all_results.append(i2c_report)
 
         print('\n\n'.join(map(lambda s: s.strip(), all_results)))
 

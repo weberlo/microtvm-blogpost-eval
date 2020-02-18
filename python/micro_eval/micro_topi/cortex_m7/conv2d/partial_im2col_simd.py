@@ -1,22 +1,19 @@
 import tvm
+from tvm import autotvm
 import topi
-from topi.util import simplify, get_const_tuple
+from topi.util import simplify, get_const_tuple, traverse_inline
 from topi.nn.pad import pad
+from topi.nn.conv2d import conv2d
+from topi.generic.nn import schedule_conv2d_nhwc
 from topi.nn.util import get_pad_tuple
+from tvm.autotvm.task.topi_integration import deserialize_args
 
 from micro_eval.util import get_op_output_shape
 from micro_eval.micro_topi.cortex_m7.micro_kernel.gemm import (
         intrin_gemm_MxKxN, gemm_MxKxN_impl
 )
 
-assert False, 'finish fucking these funcs into the format that direct_simd and direct follow'
-
 def conv2d_partial_im2col_simd(*args, **kwargs):
-        # (data, kernel, strides, padding, out_dtype, im2col_batch_size):
-    # data, kernel, reshaped_conv = compute_func(
-    #     data, kernel, strides, padding, out_dtype, im2col_batch_size)
-    # sched = schedule_func(data, kernel, reshaped_conv)
-    # return sched, [data, kernel, reshaped_conv]
     assert not kwargs, "Do not support kwargs in template function call"
     args = deserialize_args(args)
     data, kernel = args[:2]
@@ -63,8 +60,16 @@ def conv2d_partial_im2col_simd_compute(cfg, data, kernel, strides, padding, dila
 
     _, PDH, PDW, _ = padded_data.shape
 
-    assert False, 'need to incorp i2c_batch_size into the config'
-    assert ((HO.value * WO.value) % im2col_batch_size) == 0, 'im2col batch size must be a factor of width x height'
+    # generate im2col batch size candidates for this particular workload
+    MAX_BATCH_SIZE = HO.value * WO.value
+    batch_size_candidates = []
+    for i in range(1, MAX_BATCH_SIZE + 1):
+        if MAX_BATCH_SIZE % i == 0:
+            batch_size_candidates.append(i)
+    cfg.define_knob('im2col_batch_size', batch_size_candidates)
+
+    # assert ((HO.value * WO.value) % im2col_batch_size) == 0, 'im2col batch size must be a factor of width x height'
+    im2col_batch_size = cfg['im2col_batch_size'].val
     num_im2col_batches = (HO * WO) // im2col_batch_size
     K = CI * KH * KW
 
@@ -129,38 +134,50 @@ def conv2d_partial_im2col_simd_compute(cfg, data, kernel, strides, padding, dila
     #        name='conv2d',
     #        tag='conv2d_nhwc')
 
-    return data, kernel, reshaped_conv
+    return reshaped_conv
 
 
 @autotvm.register_topi_schedule(schedule_conv2d_nhwc, 'micro_dev', ['partial_im2col'])
-def _schedule(data, kernel, reshaped_conv):
-    sched = tvm.create_schedule(reshaped_conv.op)
+def conv2d_partial_im2col_simd_nhwc_schedule(cfg, outs):
+    sched = tvm.create_schedule([x.op for x in outs])
 
-    # unpack intermediate ops
-    conv = reshaped_conv.op.input_tensors[0]
-    im2col_data = conv.op.input_tensors[0]
-    padded_data = im2col_data.op.input_tensors[0]
+    def _callback(op):
+        if 'conv2d_nhwc' not in op.tag:
+            return
 
-    # NOTE: If we try to compute the conv or kernel reshape inline, then tensorization fails.
-    # NOTE it gets worse though. because now the nonreshaped conv is generated
-    # in a workspace, before being copied over to the reshaped tensor.
+        # extract tensors
+        output = op.output(0)
+        conv = op
+        im2col_data = conv.input_tensors[0]
+        padded_data = im2col_data.op.input_tensors[0]
+        last = outs[0]
 
-    #sched[reshaped_kernel].compute_inline()
-    sched[padded_data].compute_inline()
-    sched[im2col_data].compute_at(sched[conv], conv.op.axis[1])
+        # NOTE: If we try to compute the conv or kernel reshape inline, then tensorization fails.
+        # NOTE it gets worse though. because now the nonreshaped conv is generated
+        # in a workspace, before being copied over to the reshaped tensor.
 
-    # tile reduction axes
-    n, i2c_batch, i2c_batch_idx, co = sched[conv].op.axis
-    k, = sched[conv].op.reduce_axis
-    sched[conv].reorder(n, i2c_batch, i2c_batch_idx, co, k)
+        #sched[reshaped_kernel].compute_inline()
+        sched[padded_data].compute_inline()
+        sched[im2col_data].compute_at(sched[conv], conv.axis[1])
 
-    _, _, im2col_batch_size, CO = get_op_output_shape(conv.op)
-    _, _, _, K = get_op_output_shape(im2col_data.op)
+        # tile reduction axes
+        n, i2c_batch, i2c_batch_idx, co = sched[conv].op.axis
+        k, = sched[conv].op.reduce_axis
+        sched[conv].reorder(n, i2c_batch, i2c_batch_idx, co, k)
 
-    # tensorize inner matmul with SIMD microkernel
-    gemm = intrin_gemm_MxKxN(im2col_batch_size, K, CO, data.dtype, conv.dtype)
-    sched[conv].tensorize(i2c_batch_idx, gemm)
-    sched[conv].pragma(n, 'import_c', gemm_MxKxN_impl(im2col_batch_size, K, CO))
+        _, _, im2col_batch_size, CO = get_op_output_shape(conv)
+        _, _, _, K = get_op_output_shape(im2col_data.op)
 
+        # tensorize inner matmul with SIMD microkernel
+        gemm, uniq_id = intrin_gemm_MxKxN(im2col_batch_size, K, CO, im2col_data.dtype, output.dtype)
+        sched[conv].tensorize(i2c_batch_idx, gemm)
+        # this is the scope to attach global config inside this kernel
+        kernel_scope = n
+        sched[conv].pragma(
+            kernel_scope,
+            'import_c',
+            gemm_MxKxN_impl(im2col_batch_size, K, CO, uniq_id))
+
+    traverse_inline(sched, outs[-1].op, _callback)
     return sched
 

@@ -105,7 +105,7 @@ def conv2d_direct_simd_nhwc_schedule(cfg, outs):
         if 'conv2d_nhwc' not in op.tag:
             return
 
-        ### extract tensors ###
+        # extract tensors
         output = op.output(0)
         conv = op
         data_vec = conv.input_tensors[0]
@@ -153,8 +153,8 @@ def conv2d_direct_simd_nhwc_schedule(cfg, outs):
         # else:
         #     assert False, 'no reordering found in config'
 
-        kernel_scope = n  # this is the scope to attach global config inside this kernel
-
+        # this is the scope to attach global config inside this kernel
+        kernel_scope = n
         # tune unroll
         sched[output].pragma(kernel_scope, 'auto_unroll_max_step', cfg['auto_unroll_max_step'].val)
         sched[output].pragma(kernel_scope, 'unroll_explicit', cfg['unroll_explicit'].val)
