@@ -24,10 +24,8 @@ def conv2d_direct_simd(*args, **kwargs):
     return sched, [data, kernel, conv]
 
 
-@autotvm.template
-def conv2d_direct_simd_template(*args, **kwargs):
-    return conv2d_direct_simd(*args, **kwargs)
-
+conv2d_direct_simd.default_data_layout = 'NHWC'
+conv2d_direct_simd.default_kernel_layout = 'HWOI'
 
 @autotvm.register_topi_compute(conv2d, 'micro_dev', ['direct_simd'])
 def conv2d_direct_simd_compute(cfg, data, kernel, strides, padding, dilation, layout, out_dtype):

@@ -24,10 +24,8 @@ def conv2d_direct(*args, **kwargs):
     return sched, [data, kernel, conv]
 
 
-@autotvm.template
-def conv2d_direct_template(*args, **kwargs):
-    return conv2d_direct(*args, **kwargs)
-
+conv2d_direct.default_data_layout = 'NHWC'
+conv2d_direct.default_kernel_layout = 'HWIO'
 
 @autotvm.register_topi_compute(conv2d, 'micro_dev', ['direct'])
 def conv2d_direct_compute(*args):

@@ -13,7 +13,7 @@ from micro_eval.micro_topi.cortex_m7.micro_kernel.gemm import (
         intrin_gemm_MxKxN, gemm_MxKxN_impl
 )
 
-def conv2d_partial_im2col_simd(*args, **kwargs):
+def conv2d_partial_im2col(*args, **kwargs):
     assert not kwargs, "Do not support kwargs in template function call"
     args = deserialize_args(args)
     data, kernel = args[:2]
@@ -21,21 +21,19 @@ def conv2d_partial_im2col_simd(*args, **kwargs):
     cfg = autotvm.get_config()
     args = [cfg] + args
     assert layout == 'NHWC'
-    conv = conv2d_partial_im2col_simd_compute(*args)
-    sched = conv2d_partial_im2col_simd_nhwc_schedule(cfg, [data, kernel, conv])
+    conv = conv2d_partial_im2col_compute(*args)
+    sched = conv2d_partial_im2col_nhwc_schedule(cfg, [data, kernel, conv])
     return sched, [data, kernel, conv]
 
 
-@autotvm.template
-def conv2d_partial_im2col_simd_template(*args, **kwargs):
-    return conv2d_partial_im2col_simd(*args, **kwargs)
-
+conv2d_partial_im2col.default_data_layout = 'NHWC'
+conv2d_partial_im2col.default_kernel_layout = 'OIHW'
 
 # TODO can we phrase `im2col_batch_size` as an axis split in the schedule,
 # rather than baking it into the compute?
 
 @autotvm.register_topi_compute(conv2d, 'micro_dev', ['partial_im2col'])
-def conv2d_partial_im2col_simd_compute(cfg, data, kernel, strides, padding, dilation, layout, out_dtype):
+def conv2d_partial_im2col_compute(cfg, data, kernel, strides, padding, dilation, layout, out_dtype):
     assert isinstance(strides, int) or len(strides) == 2
     assert isinstance(dilation, int) or len(dilation) == 2
     assert layout == 'NHWC'
@@ -138,7 +136,7 @@ def conv2d_partial_im2col_simd_compute(cfg, data, kernel, strides, padding, dila
 
 
 @autotvm.register_topi_schedule(schedule_conv2d_nhwc, 'micro_dev', ['partial_im2col'])
-def conv2d_partial_im2col_simd_nhwc_schedule(cfg, outs):
+def conv2d_partial_im2col_nhwc_schedule(cfg, outs):
     sched = tvm.create_schedule([x.op for x in outs])
 
     def _callback(op):

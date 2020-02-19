@@ -21,6 +21,7 @@ Auto-tuning convolution on ARM Cortex-M7 STM32F746 Boards
 
 TODO More docs
 """
+import json
 import logging
 import os
 import sys
@@ -53,7 +54,19 @@ from topi.nn.pad import pad
 from topi.nn.util import get_pad_tuple
 from topi.util import simplify, get_const_tuple, traverse_inline
 
-from micro_eval.util import gen_conv2d, gen_cifar10_cnn, relay_micro_build, custom_pick_best, reset_gdbinit
+from micro_eval.util import (
+    CMSIS_PATH, CMSIS_INCLUDE_PATHS,
+    NamedTensor, NamedType, BakedType,
+    print_c_source,
+    custom_pick_best,
+    relay_micro_build, reset_gdbinit,
+    get_comm_overhead, benchmark_micro_func,
+    check_conv2d_output
+)
+from micro_eval.model.cifar10_cnn import gen_cifar10_cnn
+from micro_eval.micro_topi.cortex_m7.conv2d.direct import conv2d_direct
+from micro_eval.micro_topi.cortex_m7.conv2d.direct_simd import conv2d_direct_simd
+from micro_eval.micro_topi.cortex_m7.conv2d.partial_im2col import conv2d_partial_im2col
 
 ################
 # Instructions #
@@ -94,19 +107,6 @@ from micro_eval.util import gen_conv2d, gen_cifar10_cnn, relay_micro_build, cust
 # command for each board, adjusting the port accordingly.
 #
 
-################
-# CMSIS CONFIG #
-################
-if 'CMSIS_PATH' not in os.environ:
-    raise RuntimeError('must have "CMSIS_PATH" in environment')
-CMSIS_PATH = os.environ['CMSIS_PATH']
-
-CMSIS_INCLUDE_PATHS = [
-    f'{CMSIS_PATH}/CMSIS/Core/Include',
-    f'{CMSIS_PATH}/CMSIS/DSP/Include',
-    f'{CMSIS_PATH}/CMSIS/NN/Include'
-]
-
 ####################
 # Autotuning Setup #
 ####################
@@ -114,29 +114,19 @@ logging.getLogger('autotvm').setLevel(logging.DEBUG)
 logging.getLogger('autotvm').addHandler(logging.StreamHandler(sys.stdout))
 
 DEV_CONFIG = micro.device.arm.stm32f746xx.default_config('127.0.0.1', 6666)
-DEV_CONFIG['mem_layout'] = micro.device.arm.stm32f746xx.gen_mem_layout(OrderedDict([
-    ('text', (18000, MemConstraint.ABSOLUTE_BYTES)),
-    ('rodata', (100, MemConstraint.ABSOLUTE_BYTES)),
-    ('data', (100, MemConstraint.ABSOLUTE_BYTES)),
-    ('bss', (600, MemConstraint.ABSOLUTE_BYTES)),
-    ('args', (4096, MemConstraint.ABSOLUTE_BYTES)),
-    ('heap', (100.0, MemConstraint.WEIGHT)),
-    #('workspace', (132000, MemConstraint.ABSOLUTE_BYTES)),
-    ('workspace', (13000, MemConstraint.ABSOLUTE_BYTES)),
-    ('stack', (32, MemConstraint.ABSOLUTE_BYTES)),
-]))
 
 DEVICE_ID = 'arm.stm32f746xx'
 TARGET = tvm.target.create('c -device=micro_dev')
 
-N_TRIAL = 1500
-EARLY_STOPPING = 800
-
-#N_TRIAL = 1
-#EARLY_STOPPING = 1
+# N_TRIAL = 1500
+# EARLY_STOPPING = 800
+N_TRIAL = 1
+EARLY_STOPPING = 1
 
 N_PER_TRIAL = 15
-E2E_LOG_FILE_NAME = f'{DEVICE_ID}.e2e.log'
+
+TEMPLATE_KEY = 'direct'
+E2E_LOG_FILE_NAME = f'{DEVICE_ID}.{TEMPLATE_KEY}.e2e.log'
 
 TRACKER_ADDR = '0.0.0.0'
 TRACKER_PORT = 9190
@@ -152,7 +142,6 @@ TIMEOUT = 0
 # Debugging #
 #############
 reset_gdbinit(DEV_CONFIG)
-
 
 ###################
 # Autotuning/Eval #
@@ -213,7 +202,7 @@ def tune_model(tasks):
                     tasks[i].args,
                     tasks[i].target,
                     tasks[i].target_host,
-                    template_key='direct')
+                    template_key=TEMPLATE_KEY)
 
     measure_option = autotvm.measure_option(
             builder=autotvm.LocalBuilder(
@@ -223,8 +212,8 @@ def tune_model(tasks):
 
     # create tmp log file
     tmp_log_file = E2E_LOG_FILE_NAME + '.tmp'
-    if os.path.exists(tmp_log_file):
-        os.remove(tmp_log_file)
+    # if os.path.exists(tmp_log_file):
+    #     os.remove(tmp_log_file)
 
     for i, task in enumerate(reversed(tasks)):
         #input(f'starting task {i}: ({task.name}, {task.args})')
@@ -254,49 +243,126 @@ def tune_model(tasks):
     os.remove(tmp_log_file)
 
 
-def eval_model(mod, target):
-    with micro.Session(DEV_CONFIG) as sess:
-        graph_mod = relay_micro_build(mod['main'], DEV_CONFIG, target)
-        ctx = tvm.micro_dev(0)
+# def eval_model(mod, target):
+#     with micro.Session(DEV_CONFIG) as sess:
+#         graph_mod = relay_micro_build(mod['main'], DEV_CONFIG, target)
+#         ctx = tvm.micro_dev(0)
 
-        data_shape = list(map(lambda x: x.value, mod['main'].params[0].checked_type.shape))
-        data_tvm = tvm.nd.array(
-            (np.random.uniform(size=data_shape)).astype(IN_DTYPE), ctx)
-        kernel_shape = list(map(lambda x: x.value, mod['main'].params[1].checked_type.shape))
-        kernel_tvm = tvm.nd.array(
-            (np.random.uniform(size=kernel_shape)).astype(IN_DTYPE), ctx)
+#         data_shape = list(map(lambda x: x.value, mod['main'].params[0].checked_type.shape))
+#         data_tvm = tvm.nd.array(
+#             (np.random.uniform(size=data_shape)).astype(IN_DTYPE), ctx)
+#         kernel_shape = list(map(lambda x: x.value, mod['main'].params[1].checked_type.shape))
+#         kernel_tvm = tvm.nd.array(
+#             (np.random.uniform(size=kernel_shape)).astype(IN_DTYPE), ctx)
 
-        graph_mod.set_input(key='data', value=data_tvm)
-        graph_mod.set_input(key='kernel', value=kernel_tvm)
+#         graph_mod.set_input(key='data', value=data_tvm)
+#         graph_mod.set_input(key='kernel', value=kernel_tvm)
 
-        # evaluate
-        print("Evaluate inference time cost...")
-        # clear any previous batch times
-        ctx.sync()
-        sess.get_last_batch_time()
-        results = []
-        for _ in range(N_PER_TRIAL):
-            graph_mod.run()
-            ctx.sync()
-            results.append(sess.get_last_batch_time())
-        return np.mean(results), np.std(results)
+#         # evaluate
+#         print("Evaluate inference time cost...")
+#         # clear any previous batch times
+#         ctx.sync()
+#         sess.get_last_batch_time()
+#         results = []
+#         for _ in range(N_PER_TRIAL):
+#             graph_mod.run()
+#             ctx.sync()
+#             results.append(sess.get_last_batch_time())
+#         return np.mean(results), np.std(results)
 
 
-def tune_and_eval_model():
+def update_rpc_server_dev_cfg():
+    RPC_SERVER_DEV_CONFIG = '/home/lweber/micro-rpc-tempdirs/utvm_dev_config.json'
+    # each op strategy needs a slightly different memory layout, so we update
+    # the dev config the RPC servers use (only works if the script that restarts the RPC
+    # server upon file modification is used)
+    if TEMPLATE_KEY == 'direct':
+        DEV_CONFIG['mem_layout'] = micro.device.arm.stm32f746xx.gen_mem_layout(OrderedDict([
+            ('text', (18000, MemConstraint.ABSOLUTE_BYTES)),
+            ('rodata', (100, MemConstraint.ABSOLUTE_BYTES)),
+            ('data', (100, MemConstraint.ABSOLUTE_BYTES)),
+            ('bss', (600, MemConstraint.ABSOLUTE_BYTES)),
+            ('args', (4096, MemConstraint.ABSOLUTE_BYTES)),
+            ('heap', (100.0, MemConstraint.WEIGHT)),
+            #('workspace', (132000, MemConstraint.ABSOLUTE_BYTES)),
+            ('workspace', (13000, MemConstraint.ABSOLUTE_BYTES)),
+            ('stack', (32, MemConstraint.ABSOLUTE_BYTES)),
+        ]))
+    elif TEMPLATE_KEY == 'direct_simd':
+        DEV_CONFIG['mem_layout'] = micro.device.arm.stm32f746xx.gen_mem_layout(OrderedDict([
+            ('text', (18000, MemConstraint.ABSOLUTE_BYTES)),
+            ('rodata', (100, MemConstraint.ABSOLUTE_BYTES)),
+            ('data', (100, MemConstraint.ABSOLUTE_BYTES)),
+            ('bss', (600, MemConstraint.ABSOLUTE_BYTES)),
+            ('args', (4096, MemConstraint.ABSOLUTE_BYTES)),
+            ('heap', (100.0, MemConstraint.WEIGHT)),
+            ('workspace', (13000, MemConstraint.ABSOLUTE_BYTES)),
+            ('stack', (32, MemConstraint.ABSOLUTE_BYTES)),
+        ]))
+    elif TEMPLATE_KEY == 'partial_im2col':
+        DEV_CONFIG['mem_layout'] = micro.device.arm.stm32f746xx.gen_mem_layout(OrderedDict([
+            ('text', (18000, MemConstraint.ABSOLUTE_BYTES)),
+            ('rodata', (100, MemConstraint.ABSOLUTE_BYTES)),
+            ('data', (100, MemConstraint.ABSOLUTE_BYTES)),
+            ('bss', (600, MemConstraint.ABSOLUTE_BYTES)),
+            ('args', (4096, MemConstraint.ABSOLUTE_BYTES)),
+            ('heap', (100.0, MemConstraint.WEIGHT)),
+            #('workspace', (132000, MemConstraint.ABSOLUTE_BYTES)),
+            ('workspace', (64000, MemConstraint.ABSOLUTE_BYTES)),
+            ('stack', (32, MemConstraint.ABSOLUTE_BYTES)),
+        ]))
+    else:
+        assert False
+
+    with open(RPC_SERVER_DEV_CONFIG, 'w') as f:
+        json.dump(DEV_CONFIG, f, indent=4)
+
+
+def get_tasks():
     from tvm.autotvm.task.topi_integration import TaskExtractEnv
+    TaskExtractEnv()
+
+    if TEMPLATE_KEY == 'direct':
+        @autotvm.task.register('topi_nn_conv2d', override=True)
+        def _conv2d_direct(*args, **kwargs):
+            return conv2d_direct(*args, **kwargs)
+        data_layout = conv2d_direct.default_data_layout
+        kernel_layout = conv2d_direct.default_kernel_layout
+    elif TEMPLATE_KEY == 'direct_simd':
+        @autotvm.task.register('topi_nn_conv2d', override=True)
+        def _conv2d_direct_simd(*args, **kwargs):
+            return conv2d_direct_simd(*args, **kwargs)
+        data_layout = conv2d_direct_simd.default_data_layout
+        kernel_layout = conv2d_direct_simd.default_kernel_layout
+    elif TEMPLATE_KEY == 'partial_im2col':
+        @autotvm.task.register('topi_nn_conv2d', override=True)
+        def _conv2d_partial_im2col(*args, **kwargs):
+            return conv2d_partial_im2col(*args, **kwargs)
+        data_layout = conv2d_partial_im2col.default_data_layout
+        kernel_layout = conv2d_partial_im2col.default_kernel_layout
+    else:
+        assert False
+
+    mod, params = gen_cifar10_cnn(
+        data_layout, kernel_layout, op_strategy=TEMPLATE_KEY, use_random_params=True)
+
+    tasks = autotvm.task.extract_from_program(
+        mod['main'], target=TARGET, params=params, ops=TUNE_OPS)
+    print(f'extracted {len(tasks)} tasks')
+    assert len(tasks) == 3
+
+    return tasks
+
+
+def main():
     #from mxnet.gluon.model_zoo.vision import get_model
     #block = get_model('mobilenetv2_0.25', pretrained=True)
     #mod, params = relay.frontend.from_mxnet(block, shape={'data': INPUT_SHAPE}, dtype=DTYPE)
 
     #mod, params = gen_conv2d('NHWC', 'HWOI')
 
-    mod, params = gen_cifar10_cnn('NHWC', 'HWOI', use_random_params=False)
-
-    tasks = autotvm.task.extract_from_program(mod["main"], target=TARGET,
-            params=params, ops=TUNE_OPS)
-
-    print(f'extracted {len(tasks)} tasks')
-    assert tasks
+    update_rpc_server_dev_cfg()
+    tasks = get_tasks()
 
     tune_model(tasks)
 
@@ -320,4 +386,4 @@ def tune_and_eval_model():
 
 
 if __name__ == '__main__':
-    tune_and_eval_model()
+    main()

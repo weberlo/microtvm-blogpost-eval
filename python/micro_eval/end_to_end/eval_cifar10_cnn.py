@@ -39,6 +39,7 @@ from micro_eval.micro_topi.cortex_m7.conv2d.direct import (
 from micro_eval.micro_topi.cortex_m7.conv2d.direct_simd import (
     conv2d_direct_simd_compute, conv2d_direct_simd_nhwc_schedule
 )
+assert False, 'add partial im2col support'
 # import micro_eval.micro_topi.cortex_m7.conv2d.partial_im2col
 from micro_eval.model.cifar10_cnn import gen_cifar10_cnn
 
@@ -271,10 +272,11 @@ def eval_micro(samples, time_overhead, cycle_overhead):
     # E2E_LOG_FILE_NAME = f'{DEVICE_ID}.e2e.log'
     E2E_LOG_FILE_NAME = f'autotvm_logs/pre_simd/{DEVICE_ID}.e2e.log.manually_fixed'
 
+    op_strategy = 'direct_simd' if USE_SIMD else 'direct'
     mod, params = gen_cifar10_cnn(
         DATA_LAYOUT, KERNEL_LAYOUTS,
-        USE_SIMD,
-        USE_RANDOM_PARAMS)
+        op_strategy=op_strategy,
+        use_random_params=USE_RANDOM_PARAMS)
     model_config = gen_model_config(mod)
     print('[Initting]')
     with micro.Session(DEV_CONFIG) as sess:
