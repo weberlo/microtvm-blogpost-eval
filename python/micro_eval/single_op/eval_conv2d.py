@@ -71,13 +71,13 @@ DEV_CONFIG['mem_layout'] = stm32f746xx.gen_mem_layout(OrderedDict([
     ('args', (8096, MemConstraint.ABSOLUTE_BYTES)),
     ('heap', (50.0, MemConstraint.WEIGHT)),
     ('workspace', (132000, MemConstraint.ABSOLUTE_BYTES)),
-    ('stack', (32, MemConstraint.ABSOLUTE_BYTES)),
+    ('stack', (128, MemConstraint.ABSOLUTE_BYTES)),
     ]))
 
 TARGET = tvm.target.create('c -device=micro_dev')
 
-# TIME_OVERHEAD, CYCLE_OVERHEAD = get_comm_overhead(DEV_CONFIG)
-TIME_OVERHEAD, CYCLE_OVERHEAD = 0.0, 0
+# TIME_OVERHEAD = get_comm_overhead(DEV_CONFIG)
+TIME_OVERHEAD = 0.0
 
 ###############
 # CONV CONFIG #
@@ -131,7 +131,7 @@ def eval_micro(
     kernel_tvm = tvm.nd.array(kernel_nt.data, ctx=ctx)
     output_tvm = tvm.nd.array(np.zeros(out_type.shape, dtype=out_type.dtype), ctx=ctx)
 
-    batch_time, _ = benchmark_micro_func(
+    batch_time = benchmark_micro_func(
         sess, micro_func,
         [data_tvm, kernel_tvm, output_tvm],
         NUM_TRIALS, TIME_OVERHEAD)
@@ -188,7 +188,7 @@ def eval_cmsis(sess, data_nt, kernel_nt, out_type):
     metadata_tvm = tvm.nd.array(metadata_np, ctx=ctx)
     output_tvm = tvm.nd.array(out_nt.data, ctx=ctx)
 
-    batch_time, _ = benchmark_micro_func(
+    batch_time = benchmark_micro_func(
         sess, micro_func,
         [data_tvm, kernel_tvm, bias_tvm, metadata_tvm, output_tvm],
         NUM_TRIALS, TIME_OVERHEAD)
@@ -287,7 +287,6 @@ def eval_partial_im2col(sess, data_nt, kernel_nt):
                     data_nt.typ.serialize(), kernel_nt.typ.serialize(),
                     STRIDES, PADDING, DILATION, DATA_LAYOUT, OUT_DTYPE)
         c_mod = tvm.build(sched, arg_bufs, target=TARGET, name='conv2d')
-        input(c_mod.get_source())
         time = eval_micro(sess, c_mod, data_nt, kernel_nt, out_type)
         time -= TIME_OVERHEAD
         results.append((i2c_batch_size, time))
@@ -301,40 +300,40 @@ def main():
     kernel_nt = KERNEL_TYPE.gen_rand_tensor(-3, 3)
     all_results = []
     with micro.Session(DEV_CONFIG) as sess:
-#         # CMSIS-NN
-#         cmsis_results = eval_cmsis(sess, data_nt, kernel_nt, CMSIS_OUT_TYPE)
-#         all_results.append(
-# f"""
-# ############
-# # CMSIS-NN #
-# ############
-# {cmsis_results}
-# """
-#         )
+        # CMSIS-NN
+        cmsis_results = eval_cmsis(sess, data_nt, kernel_nt, CMSIS_OUT_TYPE)
+        all_results.append(
+f"""
+############
+# CMSIS-NN #
+############
+{cmsis_results}
+"""
+        )
 
-#         # direct w/o SIMD
-#         [default_nchw_time, default_nhwc_time] = eval_direct(sess, data_nt, kernel_nt)
-#         all_results.append(
-# f"""
-# ##########
-# # DIRECT #
-# ##########
-#   NCHW time: {default_nchw_time}
-#   NHWC time: {default_nhwc_time}
-# """)
+        # direct w/o SIMD
+        [default_nchw_time, default_nhwc_time] = eval_direct(sess, data_nt, kernel_nt)
+        all_results.append(
+f"""
+##########
+# DIRECT #
+##########
+  NCHW time: {default_nchw_time}
+  NHWC time: {default_nhwc_time}
+""")
 
-#         # direct w/ SIMD
-#         direct_simd_results = eval_direct_simd(sess, data_nt, kernel_nt)
-#         [small_direct_simd_time, medium_direct_simd_time, large_direct_simd_time] = direct_simd_results
-#         all_results.append(
-# f"""
-# #################
-# # DIRECT + SIMD #
-# #################
-#   small time: {small_direct_simd_time}
-#   medium time: {medium_direct_simd_time}
-#   large time: {large_direct_simd_time}
-# """)
+        # direct w/ SIMD
+        direct_simd_results = eval_direct_simd(sess, data_nt, kernel_nt)
+        [small_direct_simd_time, medium_direct_simd_time, large_direct_simd_time] = direct_simd_results
+        all_results.append(
+f"""
+#################
+# DIRECT + SIMD #
+#################
+  small time: {small_direct_simd_time}
+  medium time: {medium_direct_simd_time}
+  large time: {large_direct_simd_time}
+""")
 
         # partial im2col w/ SIMD
         partial_im2col_results = eval_partial_im2col(sess, data_nt, kernel_nt)

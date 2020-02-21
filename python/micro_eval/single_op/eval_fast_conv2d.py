@@ -52,7 +52,7 @@ DEV_CONFIG['mem_layout'] = stm32f746xx.gen_mem_layout(OrderedDict([
     ('args', (8096, MemConstraint.ABSOLUTE_BYTES)),
     ('heap', (50.0, MemConstraint.WEIGHT)),
     ('workspace', (132000, MemConstraint.ABSOLUTE_BYTES)),
-    ('stack', (32, MemConstraint.ABSOLUTE_BYTES)),
+    ('stack', (128, MemConstraint.ABSOLUTE_BYTES)),
     ]))
 
 N, H, W, CO, CI = 1, 16, 16, 32, 32
@@ -79,7 +79,7 @@ NUM_TRIALS = 15
 
 USE_TUNED_SCHEDULES = True
 
-def run_cmsis_conv2d(sess, time_overhead, cycle_overhead, data_np, kernel_np, bias_np):
+def run_cmsis_conv2d(sess, time_overhead, data_np, kernel_np, bias_np):
     micro_mod = create_micro_mod(
         MockCMod(CMSIS_CONV_SRC_PATH),
         DEV_CONFIG,
@@ -93,18 +93,15 @@ def run_cmsis_conv2d(sess, time_overhead, cycle_overhead, data_np, kernel_np, bi
     bias_tvm = tvm.nd.array(bias_np, ctx=ctx)
     output_tvm = tvm.nd.array(np.zeros(CMSIS_OUTPUT_SHAPE, dtype=DTYPE), ctx=ctx)
 
-    batch_time, batch_cycles = benchmark_micro_func(
+    batch_time = benchmark_micro_func(
         sess, micro_func,
         [data_tvm, kernel_tvm, bias_tvm, output_tvm],
         NUM_TRIALS, time_overhead)
-    # batch_time -= time_overhead
-    # batch_cycles -= cycle_overhead
-    import pdb; pdb.set_trace()
 
-    return output_tvm.asnumpy(), batch_time, batch_cycles
+    return output_tvm.asnumpy(), batch_time
 
 
-def run_micro_conv2d(sess, time_overhead, cycle_overhead, data_np, kernel_np, bias_np):
+def run_micro_conv2d(sess, time_overhead, data_np, kernel_np, bias_np):
     mod = build_conv2d_relay()
 
     params = {
@@ -123,17 +120,14 @@ def run_micro_conv2d(sess, time_overhead, cycle_overhead, data_np, kernel_np, bi
     ctx = tvm.micro_dev(0)
     ctx.sync()
     sess.get_last_batch_time()
-    sess.get_last_batch_cycles()
     graph_mod.set_input(data=data_np)
     for _ in range(NUM_TRIALS):
         graph_mod.run()
     ctx.sync()
     batch_time = sess.get_last_batch_time()
-    batch_cycles = sess.get_last_batch_cycles()
     batch_time -= time_overhead
-    batch_cycles -= cycle_overhead
 
-    return graph_mod.get_output(0).asnumpy(), batch_time, batch_cycles
+    return graph_mod.get_output(0).asnumpy(), batch_time
 
 
 def run_intrp_conv2d(data_np, kernel_np, bias_np):
@@ -170,7 +164,7 @@ def build_conv2d_relay():
 def main():
     reset_gdbinit(DEV_CONFIG)
 
-    time_overhead, cycle_overhead = get_comm_overhead(DEV_CONFIG)
+    time_overhead = get_comm_overhead(DEV_CONFIG)
 
     with micro.Session(DEV_CONFIG) as sess:
         # gen CMSIS tensors
@@ -179,7 +173,7 @@ def main():
         # bias_np = np.random.randint(-3, 3, size=CMSIS_BIAS_SHAPE, dtype=DTYPE)
         bias_np = np.zeros(CMSIS_BIAS_SHAPE, dtype=DTYPE)
 
-        cmsis_output_np, cmsis_time, cmsis_cycles = run_cmsis_conv2d(sess, time_overhead, cycle_overhead, data_np, kernel_np, bias_np)
+        cmsis_output_np, cmsis_time = run_cmsis_conv2d(sess, time_overhead data_np, kernel_np, bias_np)
         assert np.sum(cmsis_output_np) != 0
 
         # gen TVM tensors
@@ -187,7 +181,7 @@ def main():
         kernel_np = np.random.randint(-3, 3, size=TVM_KERNEL_SHAPE, dtype=DTYPE)
         bias_np = np.random.randint(-3, 3, size=TVM_BIAS_SHAPE, dtype=DTYPE)
 
-        micro_output_np, micro_time, micro_cycles = run_micro_conv2d(sess, time_overhead, cycle_overhead, data_np, kernel_np, bias_np)
+        micro_output_np, micro_time = run_micro_conv2d(sess, time_overhead, data_np, kernel_np, bias_np)
         assert np.sum(micro_output_np) != 0
 
         #intrp_output_np = run_intrp_conv2d(data_np, kernel_np, bias_np)
@@ -195,33 +189,18 @@ def main():
         print(f'Time overhead was {time_overhead}')
         print('[CMSIS]')
         print(f'Total Batch Time: {cmsis_time}')
-        #print(f'Total Batch Cycles: {cmsis_cycles}')
         print(f'Time Per Trial: {cmsis_time / NUM_TRIALS}')
-        #print(f'Cycles Per Trial: {cmsis_cycles / NUM_TRIALS}')
         print('[MicroTVM]')
         print(f'Total Batch Time: {micro_time}')
-        #print(f'Total Batch Cycles: {micro_cycles}')
         print(f'Time Per Trial: {micro_time / NUM_TRIALS}')
-        #print(f'Cycles Per Trial: {micro_cycles / NUM_TRIALS}')
         print('[MicroTVM Speedup]')
         print(f'Time: {cmsis_time / micro_time}')
-        #print(f'Cycles: {cmsis_cycles / micro_cycles}')
         #assert np.array_equal(micro_output_np, intrp_output_np)
 
 
 ###############
 # OLD RESULTS #
 ###############
-
-# N, H, W, CO, CI = 1, 16, 16, 8, 8
-# KH, KW = 5, 5
-# NUM_TRIALS = 15
-#
-# [CMSIS]
-# Cycles Per Trial: {985435, 977967, 977967, 977967, ...}
-# [MicroTVM Tuned]
-# Cycles Per Trial: {7394236, 7394043, 7393884, 7394065, 7393866, ...}
-
 
 # N, H, W, CO, CI = 1, 16, 16, 32, 32
 # KH, KW = 5, 5
@@ -233,7 +212,6 @@ def main():
 # Time: 2387.391724
 # [MicroTVM Speedup]
 # Time: 0.39783520335266104
-
 
 ###############
 # OLD RESULTS #

@@ -26,13 +26,14 @@ def conv2d_partial_im2col(*args, **kwargs):
     return sched, [data, kernel, conv]
 
 
+conv2d_partial_im2col.template_key = 'partial_im2col'
 conv2d_partial_im2col.default_data_layout = 'NHWC'
 conv2d_partial_im2col.default_kernel_layout = 'OIHW'
 
 # TODO can we phrase `im2col_batch_size` as an axis split in the schedule,
 # rather than baking it into the compute?
 
-@autotvm.register_topi_compute(conv2d, 'micro_dev', ['partial_im2col'])
+@autotvm.register_topi_compute(conv2d, 'micro_dev', [conv2d_partial_im2col.template_key])
 def conv2d_partial_im2col_compute(cfg, data, kernel, strides, padding, dilation, layout, out_dtype):
     assert isinstance(strides, int) or len(strides) == 2
     assert isinstance(dilation, int) or len(dilation) == 2
@@ -135,7 +136,7 @@ def conv2d_partial_im2col_compute(cfg, data, kernel, strides, padding, dilation,
     return reshaped_conv
 
 
-@autotvm.register_topi_schedule(schedule_conv2d_nhwc, 'micro_dev', ['partial_im2col'])
+@autotvm.register_topi_schedule(schedule_conv2d_nhwc, 'micro_dev', [conv2d_partial_im2col.template_key])
 def conv2d_partial_im2col_nhwc_schedule(cfg, outs):
     sched = tvm.create_schedule([x.op for x in outs])
 

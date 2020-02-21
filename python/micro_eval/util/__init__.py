@@ -1,5 +1,6 @@
 from collections import Iterable, OrderedDict
 import json
+import logging
 import os
 from typing import *
 
@@ -31,6 +32,18 @@ CMSIS_INCLUDE_PATHS = [
     f'{CMSIS_PATH}/CMSIS/DSP/Include',
     f'{CMSIS_PATH}/CMSIS/NN/Include'
 ]
+
+def get_logger(log_file_name):
+    logger = logging.getLogger('micro_eval')
+    logger.setLevel(logging.DEBUG)
+    fh = logging.FileHandler(log_file_name)
+    fh.setLevel(logging.DEBUG)
+    ch = logging.StreamHandler()
+    ch.setLevel(logging.ERROR)
+    logger.addHandler(fh)
+    logger.addHandler(ch)
+    return logger
+
 
 class NamedTensor:
     def __init__(self, data: np.ndarray, layout: str):
@@ -302,7 +315,7 @@ print_utvm_args
         f.write(gdbinit_contents)
 
 
-def get_comm_overhead(dev_config):
+def get_comm_overhead(dev_config, num_trials=1):
     """Get communication overhead by executing an empty kernel."""
     class EmptyCMod:
         def __init__(self):
@@ -312,18 +325,14 @@ def get_comm_overhead(dev_config):
             assert fcompile is not None
             fcompile(out_obj_path, f'{os.path.dirname(__file__)}/empty.c')
 
+    # do multiple trials, then calc the average comm overhead
+    results = []
     with micro.Session(dev_config) as sess:
         micro_mod = create_micro_mod(EmptyCMod(), dev_config)
         micro_func = micro_mod['empty']
-        ctx = tvm.micro_dev(0)
-        ctx.sync()
-        sess.get_last_batch_time()
-        sess.get_last_batch_cycles()
-        micro_func()
-        ctx.sync()
-        exec_time = sess.get_last_batch_time()
-        exec_cycles = sess.get_last_batch_cycles()
-        return exec_time, exec_cycles
+        for _ in range(num_trials):
+            results.append(benchmark_micro_func(sess, micro_func, [], 1, 0.0))
+    return sum(results) / len(results)
 
 
 def benchmark_micro_func(sess, micro_func, args, num_trials, time_overhead):
@@ -331,11 +340,10 @@ def benchmark_micro_func(sess, micro_func, args, num_trials, time_overhead):
     # sync before and after to ensure these are the only tasks in the queue
     ctx.sync()
     sess.get_last_batch_time()
-    sess.get_last_batch_cycles()
     for _ in range(num_trials):
         micro_func(*args)
     ctx.sync()
-    return (sess.get_last_batch_time() / num_trials) - time_overhead, sess.get_last_batch_cycles()
+    return (sess.get_last_batch_time() / num_trials) - time_overhead
 
 
 class MockCMod:

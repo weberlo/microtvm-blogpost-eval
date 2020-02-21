@@ -24,10 +24,11 @@ def conv2d_direct_simd(*args, **kwargs):
     return sched, [data, kernel, conv]
 
 
+conv2d_direct_simd.template_key = 'direct_simd'
 conv2d_direct_simd.default_data_layout = 'NHWC'
 conv2d_direct_simd.default_kernel_layout = 'HWOI'
 
-@autotvm.register_topi_compute(conv2d, 'micro_dev', ['direct_simd'])
+@autotvm.register_topi_compute(conv2d, 'micro_dev', [conv2d_direct_simd.template_key])
 def conv2d_direct_simd_compute(cfg, data, kernel, strides, padding, dilation, layout, out_dtype):
     assert isinstance(strides, int) or len(strides) == 2
     assert isinstance(dilation, int) or len(dilation) == 2
@@ -95,7 +96,7 @@ def conv2d_direct_simd_compute(cfg, data, kernel, strides, padding, dilation, la
     return conv
 
 
-@autotvm.register_topi_schedule(schedule_conv2d_nhwc, 'micro_dev', ['direct_simd'])
+@autotvm.register_topi_schedule(schedule_conv2d_nhwc, 'micro_dev', [conv2d_direct_simd.template_key])
 def conv2d_direct_simd_nhwc_schedule(cfg, outs):
     sched = tvm.create_schedule([x.op for x in outs])
 

@@ -13,7 +13,7 @@ def gen_cifar10_cnn(data_layout, kernel_layouts, op_strategy='direct', use_rando
     # TODO change relay/op/tensor/unary.cc _make.clip to accept exprs instead of doubles
     # TODO discrepancies between outputs might be a result of the bias_add op
     # not matching the semantics of the CMSIS bias add.
-    if op_strategy == 'direct_simd':
+    if op_strategy in ('direct_simd', 'partial_im2col'):
         # to fit our SIMD intrinsic, we make the 'C' dimension a multiple of 4
         data_shape_dict = dict(N=1, C=4, H=32, W=32)
         conv0_shape_dict = dict(O=32, I=4, H=5, W=5)

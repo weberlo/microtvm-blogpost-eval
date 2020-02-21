@@ -24,10 +24,11 @@ def conv2d_direct(*args, **kwargs):
     return sched, [data, kernel, conv]
 
 
+conv2d_direct.template_key = 'direct'
 conv2d_direct.default_data_layout = 'NHWC'
 conv2d_direct.default_kernel_layout = 'HWIO'
 
-@autotvm.register_topi_compute(conv2d, 'micro_dev', ['direct'])
+@autotvm.register_topi_compute(conv2d, 'micro_dev', [conv2d_direct.template_key])
 def conv2d_direct_compute(*args):
     layout = args[-2]
     if layout == 'NHWC':
@@ -85,7 +86,7 @@ def _conv2d_direct_nchw_compute(cfg, data, kernel, strides, padding, dilation, l
     return conv
 
 
-@autotvm.register_topi_schedule(schedule_conv2d_nhwc, 'micro_dev', ['direct'])
+@autotvm.register_topi_schedule(schedule_conv2d_nhwc, 'micro_dev', [conv2d_direct.template_key])
 def conv2d_direct_nhwc_schedule(cfg, outs):
     sched = tvm.create_schedule([x.op for x in outs])
 

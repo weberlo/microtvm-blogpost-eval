@@ -64,6 +64,7 @@ from micro_eval.util import (
     check_conv2d_output
 )
 from micro_eval.model.cifar10_cnn import gen_cifar10_cnn
+from micro_eval.micro_topi import collect_conv_tasks
 from micro_eval.micro_topi.cortex_m7.conv2d.direct import conv2d_direct
 from micro_eval.micro_topi.cortex_m7.conv2d.direct_simd import conv2d_direct_simd
 from micro_eval.micro_topi.cortex_m7.conv2d.partial_im2col import conv2d_partial_im2col
@@ -120,34 +121,34 @@ TARGET = tvm.target.create('c -device=micro_dev')
 
 # N_TRIAL = 1500
 # EARLY_STOPPING = 800
-N_TRIAL = 1
-EARLY_STOPPING = 1
+N_TRIAL = 500
+EARLY_STOPPING = 250
+# N_TRIAL = 1
+# EARLY_STOPPING = 1
 
 N_PER_TRIAL = 15
-
-TEMPLATE_KEY = 'direct'
-E2E_LOG_FILE_NAME = f'{DEVICE_ID}.{TEMPLATE_KEY}.e2e.log'
 
 TRACKER_ADDR = '0.0.0.0'
 TRACKER_PORT = 9190
 
 TUNE_OPS = [relay.op.nn.conv2d]
 
-IN_DTYPE = 'int8'
-OUT_DTYPE = 'int32'
 # disable timeouts because JTAG is slow
 TIMEOUT = 0
 
 #############
 # Debugging #
 #############
-reset_gdbinit(DEV_CONFIG)
+# NOTE in the autotvm setting, this is only useful if there's only one RPC server running
+# reset_gdbinit(DEV_CONFIG)
 
 ###################
 # Autotuning/Eval #
 ###################
 
 #def gen_conv2d_relay():
+#    IN_DTYPE = 'int8'
+#    OUT_DTYPE = 'int32'
 #    N, H, W, CO, CI = 1, 32, 32, 16, 3
 #    KH, KW = 5, 5
 #    STRIDES, PADDING, DILATION = (1, 1), (2, 2), (1, 1)
@@ -189,20 +190,12 @@ def get_num_devices(dev_id):
     return num_connected
 
 
-def tune_model(tasks):
+def tune_model(tasks, log_file_name):
     n_parallel = get_num_devices(DEVICE_ID)
     #print('FORCING N_PARALLEL TO 1')
     #n_parallel = 1
 
     print('[Tuning]')
-    for i in range(len(tasks)):
-        if 'conv2d' in tasks[i].name:
-            tasks[i] = autotvm.task.create(
-                    tasks[i].name,
-                    tasks[i].args,
-                    tasks[i].target,
-                    tasks[i].target_host,
-                    template_key=TEMPLATE_KEY)
 
     measure_option = autotvm.measure_option(
             builder=autotvm.LocalBuilder(
@@ -211,11 +204,11 @@ def tune_model(tasks):
             )
 
     # create tmp log file
-    tmp_log_file = E2E_LOG_FILE_NAME + '.tmp'
+    tmp_log_file = log_file_name + '.tmp'
     # if os.path.exists(tmp_log_file):
     #     os.remove(tmp_log_file)
 
-    for i, task in enumerate(reversed(tasks)):
+    for i, task in enumerate(tasks):
         #input(f'starting task {i}: ({task.name}, {task.args})')
         prefix = "[Task %2d/%2d] " % (i+1, len(tasks))
         #tuner = XGBTuner(task, loss_type='rank')
@@ -238,8 +231,8 @@ def tune_model(tasks):
     #    print(f'  task {i}: {best_config}')
 
     # store best record in a cache file
-    #autotvm.record.pick_best(tmp_log_file, E2E_LOG_FILE_NAME)
-    custom_pick_best(tmp_log_file, E2E_LOG_FILE_NAME, top_k=5)
+    #autotvm.record.pick_best(tmp_log_file, log_file_name)
+    custom_pick_best(tmp_log_file, log_file_name, top_k=5)
     os.remove(tmp_log_file)
 
 
@@ -271,12 +264,11 @@ def tune_model(tasks):
 #         return np.mean(results), np.std(results)
 
 
-def update_rpc_server_dev_cfg():
-    RPC_SERVER_DEV_CONFIG = '/home/lweber/micro-rpc-tempdirs/utvm_dev_config.json'
+def update_rpc_server_dev_cfg(template_key):
     # each op strategy needs a slightly different memory layout, so we update
     # the dev config the RPC servers use (only works if the script that restarts the RPC
     # server upon file modification is used)
-    if TEMPLATE_KEY == 'direct':
+    if template_key == 'direct':
         DEV_CONFIG['mem_layout'] = micro.device.arm.stm32f746xx.gen_mem_layout(OrderedDict([
             ('text', (18000, MemConstraint.ABSOLUTE_BYTES)),
             ('rodata', (100, MemConstraint.ABSOLUTE_BYTES)),
@@ -286,9 +278,9 @@ def update_rpc_server_dev_cfg():
             ('heap', (100.0, MemConstraint.WEIGHT)),
             #('workspace', (132000, MemConstraint.ABSOLUTE_BYTES)),
             ('workspace', (13000, MemConstraint.ABSOLUTE_BYTES)),
-            ('stack', (32, MemConstraint.ABSOLUTE_BYTES)),
+            ('stack', (128, MemConstraint.ABSOLUTE_BYTES)),
         ]))
-    elif TEMPLATE_KEY == 'direct_simd':
+    elif template_key == 'direct_simd':
         DEV_CONFIG['mem_layout'] = micro.device.arm.stm32f746xx.gen_mem_layout(OrderedDict([
             ('text', (18000, MemConstraint.ABSOLUTE_BYTES)),
             ('rodata', (100, MemConstraint.ABSOLUTE_BYTES)),
@@ -297,9 +289,9 @@ def update_rpc_server_dev_cfg():
             ('args', (4096, MemConstraint.ABSOLUTE_BYTES)),
             ('heap', (100.0, MemConstraint.WEIGHT)),
             ('workspace', (13000, MemConstraint.ABSOLUTE_BYTES)),
-            ('stack', (32, MemConstraint.ABSOLUTE_BYTES)),
+            ('stack', (128, MemConstraint.ABSOLUTE_BYTES)),
         ]))
-    elif TEMPLATE_KEY == 'partial_im2col':
+    elif template_key == 'partial_im2col':
         DEV_CONFIG['mem_layout'] = micro.device.arm.stm32f746xx.gen_mem_layout(OrderedDict([
             ('text', (18000, MemConstraint.ABSOLUTE_BYTES)),
             ('rodata', (100, MemConstraint.ABSOLUTE_BYTES)),
@@ -307,34 +299,37 @@ def update_rpc_server_dev_cfg():
             ('bss', (600, MemConstraint.ABSOLUTE_BYTES)),
             ('args', (4096, MemConstraint.ABSOLUTE_BYTES)),
             ('heap', (100.0, MemConstraint.WEIGHT)),
-            #('workspace', (132000, MemConstraint.ABSOLUTE_BYTES)),
-            ('workspace', (64000, MemConstraint.ABSOLUTE_BYTES)),
-            ('stack', (32, MemConstraint.ABSOLUTE_BYTES)),
+            ('workspace', (132000, MemConstraint.ABSOLUTE_BYTES)),
+            # ('workspace', (64000, MemConstraint.ABSOLUTE_BYTES)),
+            ('stack', (128, MemConstraint.ABSOLUTE_BYTES)),
         ]))
     else:
         assert False
 
-    with open(RPC_SERVER_DEV_CONFIG, 'w') as f:
-        json.dump(DEV_CONFIG, f, indent=4)
+    RPC_SERVER_DEV_CONFIG_BASE = '/home/lweber/micro-rpc-tempdirs'
+    for i in range(10):
+        DEV_CONFIG['server_port'] = 6666 + i
+        with open(f'{RPC_SERVER_DEV_CONFIG_BASE}/{i}/utvm_dev_config.json', 'w') as f:
+            json.dump(DEV_CONFIG, f, indent=4)
 
 
-def get_tasks():
+def get_tasks(template_key):
     from tvm.autotvm.task.topi_integration import TaskExtractEnv
     TaskExtractEnv()
 
-    if TEMPLATE_KEY == 'direct':
+    if template_key == 'direct':
         @autotvm.task.register('topi_nn_conv2d', override=True)
         def _conv2d_direct(*args, **kwargs):
             return conv2d_direct(*args, **kwargs)
         data_layout = conv2d_direct.default_data_layout
         kernel_layout = conv2d_direct.default_kernel_layout
-    elif TEMPLATE_KEY == 'direct_simd':
+    elif template_key == 'direct_simd':
         @autotvm.task.register('topi_nn_conv2d', override=True)
         def _conv2d_direct_simd(*args, **kwargs):
             return conv2d_direct_simd(*args, **kwargs)
         data_layout = conv2d_direct_simd.default_data_layout
         kernel_layout = conv2d_direct_simd.default_kernel_layout
-    elif TEMPLATE_KEY == 'partial_im2col':
+    elif template_key == 'partial_im2col':
         @autotvm.task.register('topi_nn_conv2d', override=True)
         def _conv2d_partial_im2col(*args, **kwargs):
             return conv2d_partial_im2col(*args, **kwargs)
@@ -343,47 +338,51 @@ def get_tasks():
     else:
         assert False
 
-    mod, params = gen_cifar10_cnn(
-        data_layout, kernel_layout, op_strategy=TEMPLATE_KEY, use_random_params=True)
-
-    tasks = autotvm.task.extract_from_program(
-        mod['main'], target=TARGET, params=params, ops=TUNE_OPS)
-    print(f'extracted {len(tasks)} tasks')
-    assert len(tasks) == 3
-
-    return tasks
-
-
-def main():
     #from mxnet.gluon.model_zoo.vision import get_model
     #block = get_model('mobilenetv2_0.25', pretrained=True)
     #mod, params = relay.frontend.from_mxnet(block, shape={'data': INPUT_SHAPE}, dtype=DTYPE)
 
     #mod, params = gen_conv2d('NHWC', 'HWOI')
 
-    update_rpc_server_dev_cfg()
-    tasks = get_tasks()
+    mod, params = gen_cifar10_cnn(
+        data_layout, kernel_layout, op_strategy=template_key, use_random_params=True)
 
-    tune_model(tasks)
+    tasks = collect_conv_tasks(mod['main'], TARGET, template_key)
 
-    #input('finished tuning...')
+    # dumb_tasks = autotvm.task.extract_from_program(
+    #     mod['main'], target=TARGET, params=params, ops=TUNE_OPS)
+    print(f'extracted {len(tasks)} tasks')
+    assert len(tasks) == 3
 
-    #print('[[Evaluation]]')
-    ## Load best schedules
-    #print("[Tuned]")
-    #with autotvm.apply_history_best(E2E_LOG_FILE_NAME):
-    #    with TARGET:
-    #        tuned_mean_time, tuned_std_dev = eval_model(mod, TARGET)
-    #        print("Mean inference time: %.2f ms (+/- %.2f ms)" % (tuned_mean_time, tuned_std_dev))
+    # for i in range(len(tasks)):
+    #     assert 'conv2d' in tasks[i].name
+    #     # overwrite template key (defaults to 'direct') with the desired key
+    #     tasks[i] = autotvm.task.create(
+    #             tasks[i].name,
+    #             tasks[i].args,
+    #             tasks[i].target,
+    #             tasks[i].target_host,
+    #             template_key=template_key)
 
-    #print("[Untuned]")
-    #untuned_mean_time, untuned_std_dev = eval_model(mod, TARGET)
-    #print("Mean inference time: %.2f ms (+/- %.2f ms)" % (untuned_mean_time, untuned_std_dev))
-    #print("[MicroTVM Speedup]")
-    #print(f"{untuned_mean_time / tuned_mean_time}")
+    return tasks
 
-    #assert False, "Task extraction is stateful and whichever eval is run first sets the schedule to be used on subsequent evals"
+
+def main():
+    # TEMPLATE_KEYS = ['direct', 'direct_simd', 'partial_im2col']
+    TEMPLATE_KEYS = ['direct']
+
+    for template_key in TEMPLATE_KEYS:
+        log_file_name = f'{DEVICE_ID}.{template_key}.e2e.log'
+
+        update_rpc_server_dev_cfg(template_key)
+        # tasks = get_tasks(template_key)
+        tasks = [get_tasks(template_key)[0]]
+
+        tune_model(tasks, log_file_name)
+
+        assert False, 'make it so you\'re using all 3 tasks again'
 
 
 if __name__ == '__main__':
     main()
+    #assert False, "Task extraction is stateful and whichever eval is run first sets the schedule to be used on subsequent evals"

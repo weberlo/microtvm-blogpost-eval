@@ -68,7 +68,7 @@ DEV_CONFIG['mem_layout'] = stm32f746xx.gen_mem_layout(OrderedDict([
     ('args', (8096, MemConstraint.ABSOLUTE_BYTES)),
     ('heap', (50.0, MemConstraint.WEIGHT)),
     ('workspace', (132000, MemConstraint.ABSOLUTE_BYTES)),
-    ('stack', (32, MemConstraint.ABSOLUTE_BYTES)),
+    ('stack', (128, MemConstraint.ABSOLUTE_BYTES)),
     ]))
 
 TARGET = tvm.target.create('c -device=micro_dev')

@@ -1,0 +1,305 @@
+time overhead is 31.900538599999997ms
+[Sample {i}]
+
+  Model execution took 112.38124639999998 milliseconds
+
+  Output: [ 51  50  -7 -43 -19 -41  43 -45  37 -25]
+
+  Prediction was Plane
+
+  Actual was Plane
+
+[Sample {i}]
+
+  Model execution took 112.14521339999999 milliseconds
+
+  Output: [ -9   0 -16  15  18 -18   7  17 -38  25]
+
+  Prediction was Truck
+
+  Actual was Bird
+
+[Sample {i}]
+
+  Model execution took 112.27780139999999 milliseconds
+
+  Output: [  2 -17 -22  -3   8 -30  39   7 -20  37]
+
+  Prediction was Frog
+
+  Actual was Deer
+
+[Sample {i}]
+
+  Model execution took 112.3463994 milliseconds
+
+  Output: [-10  16 -14  20 -14  10  32   9 -44  -4]
+
+  Prediction was Frog
+
+  Actual was Cat
+
+[Sample {i}]
+
+  Model execution took 112.68616740000002 milliseconds
+
+  Output: [-35  -8  16 -16  -6 -29  77 -12 -11  23]
+
+  Prediction was Frog
+
+  Actual was Frog
+
+[Sample {i}]
+
+  Model execution took 113.0131604 milliseconds
+
+  Output: [-11  16   4 -10  -6 -17 -29  -5  20  40]
+
+  Prediction was Truck
+
+  Actual was Truck
+
+[Sample {i}]
+
+  Model execution took 112.55335839999998 milliseconds
+
+  Output: [ 24 -31  40  27   6 -14   9  -8 -34 -19]
+
+  Prediction was Bird
+
+  Actual was Plane
+
+[Sample {i}]
+
+  Model execution took 112.1969584 milliseconds
+
+  Output: [ -9   7   6   0  46 -18  -3  20 -26 -20]
+
+  Prediction was Deer
+
+  Actual was Truck
+
+[Sample {i}]
+
+  Model execution took 112.68014639999998 milliseconds
+
+  Output: [-30 -29  18   5  -5  12  61  18 -34 -15]
+
+  Prediction was Frog
+
+  Actual was Deer
+
+[Sample {i}]
+
+  Model execution took 117.65115540000002 milliseconds
+
+  Output: [-42  33  -4 -11   9 -52  72 -21 -10  26]
+
+  Prediction was Frog
+
+  Actual was Car
+
+[[Micro Tuned]]
+
+[Sample 0]
+
+  Model execution took 184.5643654 milliseconds
+
+  Output: [[ 0 -1  0 -1  0  0 -1 -1 -1 -1]]
+
+  Prediction was Plane
+
+  Actual was Plane
+
+[Sample 1]
+
+  Model execution took 183.7414504 milliseconds
+
+  Output: [[-11  -4  -5   3  -9   4  -3  -3 -14   0]]
+
+  Prediction was Dog
+
+  Actual was Bird
+
+[Sample 2]
+
+  Model execution took 184.9664194 milliseconds
+
+  Output: [[-2  0 -3 -1 -4  1 -4  1 -2  0]]
+
+  Prediction was Dog
+
+  Actual was Deer
+
+[Sample 3]
+
+  Model execution took 183.7669074 milliseconds
+
+  Output: [[-6 -3 -5  2 -8  4 -3  0 -6 -1]]
+
+  Prediction was Dog
+
+  Actual was Cat
+
+[Sample 4]
+
+  Model execution took 183.9723544 milliseconds
+
+  Output: [[-2 -2 -1 -1 -2  0 -3  3 -3 -1]]
+
+  Prediction was Horse
+
+  Actual was Frog
+
+[Sample 5]
+
+  Model execution took 183.36393040000002 milliseconds
+
+  Output: [[-10  -8  -3   1  -1   1  -5   4 -10  -2]]
+
+  Prediction was Horse
+
+  Actual was Truck
+
+[Sample 6]
+
+  Model execution took 183.8205484 milliseconds
+
+  Output: [[ 0 -1  0 -1  0  0 -1 -1 -1 -1]]
+
+  Prediction was Plane
+
+  Actual was Plane
+
+[Sample 7]
+
+  Model execution took 183.9415754 milliseconds
+
+  Output: [[-20  -7  -9   6 -17   4  -2   0 -12  -6]]
+
+  Prediction was Cat
+
+  Actual was Truck
+
+[Sample 8]
+
+  Model execution took 184.1163924 milliseconds
+
+  Output: [[-16  -8  -3   2 -14   7  -2   4  -9  -7]]
+
+  Prediction was Dog
+
+  Actual was Deer
+
+[Sample 9]
+
+  Model execution took 184.0652164 milliseconds
+
+  Output: [[-13  -6  -3   2  -9   0  -2   4  -6  -3]]
+
+  Prediction was Horse
+
+  Actual was Car
+
+time overhead is 32.0277946ms
+[Sample 0]
+  model execution took 112.5433634 milliseconds
+  output: [ 35 -34 -15   0   6 -13  49  57 -62 -24]
+  prediction was Horse
+  actual was Plane
+[Sample 1]
+  model execution took 111.86062240000001 milliseconds
+  output: [ 13  -8  -7  13  -1 -14  22 -23 -10  14]
+  prediction was Frog
+  actual was Car
+[Sample 2]
+  model execution took 112.20449740000001 milliseconds
+  output: [  4  -3  11  23  10 -24 -16 -12   0   7]
+  prediction was Cat
+  actual was Ship
+[Sample 3]
+  model execution took 111.76618539999998 milliseconds
+  output: [-13 -10 -16  -5  37 -26  20  14 -24  25]
+  prediction was Deer
+  actual was Truck
+[Sample 4]
+  model execution took 112.24651639999999 milliseconds
+  output: [  0  50 -28 -13 -22  13  25 -27  -5   9]
+  prediction was Car
+  actual was Horse
+[Sample 5]
+  model execution took 113.1080134 milliseconds
+  output: [ 29   1  24   9   0 -45   3 -21   7  -5]
+  prediction was Plane
+  actual was Plane
+[Sample 6]
+  model execution took 112.70777240000001 milliseconds
+  output: [-21  20 -19  48 -22 -32   1  10 -34  50]
+  prediction was Truck
+  actual was Truck
+[Sample 7]
+  model execution took 112.23413240000002 milliseconds
+  output: [ 31   5 -30 -33 -25 -19  50   8 -43  59]
+  prediction was Truck
+  actual was Bird
+[Sample 8]
+  model execution took 112.2121324 milliseconds
+  output: [-11  60 -13 -37 -23 -16  55 -42   7  20]
+  prediction was Car
+  actual was Frog
+[Sample 9]
+  model execution took 111.80505740000001 milliseconds
+  output: [-24  15  -3   5  20   2  28 -23 -12  -7]
+  prediction was Frog
+  actual was Dog
+[[Micro Tuned]]
+[Sample 0]
+  model execution took 185.0932464 milliseconds
+  output: [[-11   3   7  -9   5 -13 -10  -9  -2  10]]
+  prediction was Truck
+  actual was Plane
+[Sample 1]
+  model execution took 185.4350574 milliseconds
+  output: [[ -2  25   9   2 -10  -5 -20  -9   4  22]]
+  prediction was Car
+  actual was Car
+[Sample 2]
+  model execution took 185.1543414 milliseconds
+  output: [[-1 -2 -1 -2  0 -2 -2  1 -1 -1]]
+  prediction was Horse
+  actual was Ship
+[Sample 3]
+  model execution took 184.99908040000003 milliseconds
+  output: [[ -3   0  -1  -5   3 -12  -5  -8  -1   6]]
+  prediction was Truck
+  actual was Truck
+[Sample 4]
+  model execution took 184.3239034 milliseconds
+  output: [[ 2  3 -2  5 -2 -2 -4 -4  3  1]]
+  prediction was Cat
+  actual was Horse
+[Sample 5]
+  model execution took 184.8034024 milliseconds
+  output: [[-1 -2 -4 -3  0 -1 -4  1 -1  2]]
+  prediction was Truck
+  actual was Plane
+[Sample 6]
+  model execution took 184.6900594 milliseconds
+  output: [[-1  9  5 -2 -4 -7 -4 -6  0  8]]
+  prediction was Car
+  actual was Truck
+[Sample 7]
+  model execution took 184.8642164 milliseconds
+  output: [[ 3 10  5  3 -5 -1 -6 -7  5 10]]
+  prediction was Car
+  actual was Bird
+[Sample 8]
+  model execution took 184.9081984 milliseconds
+  output: [[ -7   0   5  -1   3 -13 -12  -9   4   9]]
+  prediction was Truck
+  actual was Frog
+[Sample 9]
+  model execution took 184.3791764 milliseconds
+  output: [[ -6  16  14   5  -1 -18 -18 -14   7  24]]
+  prediction was Truck
+  actual was Dog

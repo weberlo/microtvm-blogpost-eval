@@ -65,7 +65,7 @@ def run_cmsis_dense(sess, data_tvm, weight_tvm, bias_tvm):
     ctx = tvm.micro_dev(0)
 
     output_tvm = tvm.nd.empty([N, NUM_OUTPUTS], ctx=ctx, dtype=DTYPE)
-    batch_time, _ = benchmark_micro_func(
+    batch_time = benchmark_micro_func(
         sess, micro_func, [data_tvm, weight_tvm, bias_tvm, output_tvm], NUM_TRIALS)
 
     return output_tvm.asnumpy(), batch_time
@@ -89,7 +89,7 @@ def run_micro_dense(sess, data_tvm, weight_tvm, bias_tvm):
     micro_func = micro_mod[func_name]
 
     output_tvm = tvm.nd.empty([N, NUM_OUTPUTS], ctx=ctx, dtype=DTYPE)
-    batch_time, _ = benchmark_micro_func(
+    batch_time = benchmark_micro_func(
         sess, micro_func, [data_tvm, weight_tvm, bias_tvm, output_tvm], NUM_TRIALS)
 
     return output_tvm.asnumpy(), batch_time
