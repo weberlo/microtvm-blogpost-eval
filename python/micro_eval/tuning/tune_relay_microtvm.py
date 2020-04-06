@@ -265,6 +265,11 @@ def tune_model(tasks, log_file_name):
 
 
 def update_rpc_server_dev_cfg(template_key):
+    if 'MICRO_RPC_SERVER_DEV_CONFIG_BASE' not in os.environ:
+        # TODO: switch to logging
+        print('WARNING: `RPC_SERVER_DEV_CONFIG_BASE` not in environment. RPC server config will not be auto-updated')
+        input('[press enter to continue]')
+        return
     # each op strategy needs a slightly different memory layout, so we update
     # the dev config the RPC servers use (only works if the script that restarts the RPC
     # server upon file modification is used)
@@ -306,7 +311,7 @@ def update_rpc_server_dev_cfg(template_key):
     else:
         assert False
 
-    RPC_SERVER_DEV_CONFIG_BASE = '/home/lweber/micro-rpc-tempdirs'
+    dev_config_base = os.environ['MICRO_RPC_SERVER_DEV_CONFIG_BASE']
     for i in range(10):
         DEV_CONFIG['server_port'] = 6666 + i
         with open(f'{RPC_SERVER_DEV_CONFIG_BASE}/{i}/utvm_dev_config.json', 'w') as f:

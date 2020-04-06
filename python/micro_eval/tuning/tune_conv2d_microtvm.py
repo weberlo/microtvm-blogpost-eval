@@ -51,7 +51,7 @@ from topi.nn.pad import pad
 from topi.nn.util import get_pad_tuple
 from topi.util import simplify, get_const_tuple, traverse_inline
 
-from micro_eval.util import conv2d_arm_micro_nchw_template
+from micro_eval.util import conv2d_arm_micro_nchw_template, reset_gdbinit
 
 ################
 # Instructions #
@@ -135,20 +135,7 @@ assert N == 1, "Only consider batch_size = 1 in this template"
 #############
 # Debugging #
 #############
-def reset_gdbinit():
-    if 'server_port' not in DEV_CONFIG:
-        return
-    with open('/home/lweber/gdb-conf/.gdbinit', 'w') as f:
-        gdb_port = DEV_CONFIG['server_port'] - 3333
-        gdbinit_contents = (
-f"""layout asm
-target remote localhost:{gdb_port}
-set $pc = UTVMInit
-break UTVMDone
-""")
-        f.write(gdbinit_contents)
 reset_gdbinit()
-
 
 ########################
 # Conv Autotuning/Eval #

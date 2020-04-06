@@ -27,6 +27,11 @@ from topi.testing import conv2d_nchw_python
 if 'CMSIS_PATH' not in os.environ:
     raise RuntimeError('must have "CMSIS_PATH" in environment')
 CMSIS_PATH = os.environ['CMSIS_PATH']
+CMSIS_HEADERS = [
+    'cmsis_gcc.h',
+    'arm_math.h',
+    'arm_nnsupportfunctions.h'
+]
 CMSIS_INCLUDE_PATHS = [
     f'{CMSIS_PATH}/CMSIS/Core/Include',
     f'{CMSIS_PATH}/CMSIS/DSP/Include',
@@ -171,7 +176,7 @@ def show_c_source(sched, arg_bufs):
 
 DEBUG_MODE = False
 
-def relay_micro_build(func, dev_config, target, params=None, lib_include_paths=None):
+def relay_micro_build(func, dev_config, target, params=None, lib_headers=None, lib_include_paths=None):
     """Create a graph runtime module with a micro device context from a Relay function.
 
     Parameters
@@ -182,8 +187,17 @@ def relay_micro_build(func, dev_config, target, params=None, lib_include_paths=N
     dev_config : TODO
         TODO
 
+    target : TODO
+        TODO
+
     params : dict
         input parameters that do not change during inference
+
+    lib_headers : TODO
+        TODO
+
+    lib_include_paths : TODO
+        TODO
 
     Return
     ------
@@ -194,7 +208,7 @@ def relay_micro_build(func, dev_config, target, params=None, lib_include_paths=N
     with relay.build_config(opt_level=3, disabled_pass={"AlterOpLayout"}):
         with tvm.build_config(disable_vectorize=True):
             graph, c_mod, params = relay.build(func, target=target, params=params)
-    micro_mod = micro.create_micro_mod(c_mod, dev_config, lib_include_paths=lib_include_paths)
+    micro_mod = micro.create_micro_mod(c_mod, dev_config, lib_headers=lib_headers, lib_include_paths=lib_include_paths)
     ctx = tvm.micro_dev(0)
     if DEBUG_MODE:
         dump_root = f'{os.path.dirname(__file__)}/../../debug/micro'
@@ -279,7 +293,11 @@ def custom_pick_best(in_log_file_name, out_log_file_name, top_k=1):
 def reset_gdbinit(dev_config):
     if 'server_port' not in dev_config:
         return
-    with open('/home/lweber/gdb-conf/.gdbinit', 'w') as f:
+    if 'MICRO_GDB_INIT_DIR' not in os.environ:
+        print('WARNING: `MICRO_GDB_INIT_DIR` not set. GDB debugging will not be smooth, yo.')
+        return
+    gdb_init_dir = os.environ['MICRO_GDB_INIT_DIR']
+    with open(f'{gdb_init_dir}/.gdbinit', 'w') as f:
         gdb_port = dev_config['server_port'] - 3333
         gdbinit_contents = (
 f"""layout src
@@ -364,3 +382,34 @@ def check_conv2d_output(
 
     topi_output_np = conv2d_nchw_python(data_nchw_np, kernel_oihw_np, strides, padding)
     tvm.testing.assert_allclose(micro_output_nchw_np, topi_output_np)
+
+
+def calc_param_mem_footprint(func, units='KB'):
+    """Calculate how many bytes are required to store the parameters of `func`.
+
+    Report is in `units` format.
+    """
+    def _sizeof(dtype):
+        if dtype in ('int8', 'uint8'):
+            return 1
+        elif dtype == 'float32':
+            return 4
+        else:
+            assert False
+    result = 0
+    for arg in func.params:
+        typ = arg.type_annotation
+        shape = get_const_tuple(typ.shape)
+        prod = 1
+        for dim in shape:
+            prod *= dim
+        result += prod * _sizeof(typ.dtype)
+
+    if units == 'B':
+        return result
+    elif units == 'KB':
+        return result * 1e-3
+    elif units == 'MB':
+        return result * 1e-6
+    else:
+        assert False

@@ -1,3 +1,4 @@
+import datetime
 import json
 import os
 import warnings
@@ -17,14 +18,15 @@ from tvm import relay
 import tvm.micro as micro
 from tvm import autotvm
 from tvm.micro import create_micro_mod
+from tvm.micro.device import MemConstraint
+from tvm.micro.device import host
 from tvm.micro.device.arm import stm32f746xx
-from tvm.micro.device.arm.stm32f746xx import MemConstraint
 from tvm.relay.testing import resnet
 from topi.util import get_const_tuple
 
 import micro_eval
 from micro_eval.util import (
-    CMSIS_PATH, CMSIS_INCLUDE_PATHS,
+    CMSIS_PATH, CMSIS_HEADERS, CMSIS_INCLUDE_PATHS,
     MockCMod,
     get_logger,
     relay_micro_build,
@@ -45,9 +47,26 @@ from micro_eval.micro_topi.cortex_m7.conv2d.direct_simd import (
 from micro_eval.model.cifar10_cnn import gen_cifar10_cnn
 
 LOGGER = get_logger('cifar10_cnn.log')
+LOGGER.info(f'[{datetime.datetime.now()}]')
 
 TARGET = tvm.target.create('c -device=micro_dev')
-DEV_CONFIG = stm32f746xx.default_config('127.0.0.1', 6666)
+DEVICE_ID = stm32f746xx.DEVICE_ID
+# DEVICE_ID = host.DEVICE_ID
+SERVER_ADDR = '127.0.0.1'
+SERVER_PORT = 6666
+
+if DEVICE_ID == stm32f746xx.DEVICE_ID:
+    def generate_config(section_constraints=None):
+        return stm32f746xx.generate_config(SERVER_ADDR, SERVER_PORT, section_constraints)
+    MICRO_HEADERS = CMSIS_HEADERS
+    MICRO_INCLUDE_PATHS = CMSIS_INCLUDE_PATHS
+elif DEVICE_ID == host.DEVICE_ID:
+    def generate_config(section_constraints=None):
+        return host.generate_config(section_constraints)
+    MICRO_HEADERS = None
+    MICRO_INCLUDE_PATHS = None
+else:
+    raise RuntimeErorr(f'unknown device ID "{DEVICE_ID}"')
 
 ###################
 # MODEL/DATA UTIL #
@@ -95,17 +114,18 @@ CIFAR10_CLASSES = ['Plane', 'Car', 'Bird', 'Cat', 'Deer', 'Dog', 'Frog', 'Horse'
 NUM_SAMPLES = 10
 
 def eval_cmsis(samples, time_overhead):
-    DEV_CONFIG['mem_layout'] = stm32f746xx.gen_mem_layout(OrderedDict([
-        ('text', (16000, MemConstraint.ABSOLUTE_BYTES)),
-        ('rodata', (4096, MemConstraint.ABSOLUTE_BYTES)),
-        ('data', (100000, MemConstraint.ABSOLUTE_BYTES)),
-        ('bss', (644, MemConstraint.ABSOLUTE_BYTES)),
-        ('args', (4096, MemConstraint.ABSOLUTE_BYTES)),
-        ('heap', (100.0, MemConstraint.WEIGHT)),
-        ('workspace', (52000, MemConstraint.ABSOLUTE_BYTES)),
-        # NOTE we need a deeper stack, since they make deep func calls
-        ('stack', (288, MemConstraint.ABSOLUTE_BYTES)),
-        ]))
+    CMSIS_SEC_CONTRAINTS = {
+        'text': (16000, MemConstraint.ABSOLUTE_BYTES),
+        'rodata': (4096, MemConstraint.ABSOLUTE_BYTES),
+        'data': (100000, MemConstraint.ABSOLUTE_BYTES),
+        'bss': (644, MemConstraint.ABSOLUTE_BYTES),
+        'args': (4096, MemConstraint.ABSOLUTE_BYTES),
+        'heap': (100.0, MemConstraint.WEIGHT),
+        'workspace': (52000, MemConstraint.ABSOLUTE_BYTES),
+        # NOTE we need a deeper stack: since they make deep func calls
+        'stack': (288, MemConstraint.ABSOLUTE_BYTES),
+    }
+    DEV_CONFIG = generate_config(CMSIS_SEC_CONTRAINTS)
     reset_gdbinit(DEV_CONFIG)
 
     DATA_LAYOUT = 'NHWC'
@@ -116,15 +136,16 @@ def eval_cmsis(samples, time_overhead):
     OUT_DTYPE = 'int8'
 
     # Begin a session
-    print('[Initting]')
+    LOGGER.debug('[Initting]')
     # TODO probably need a different dev conf for cmsis
     with micro.Session(DEV_CONFIG) as sess:
         # Build the function
-        print('[Building]')
+        LOGGER.debug('[Building]')
         micro_mod = create_micro_mod(
             MockCMod(CIFAR10_SRC_PATH),
             DEV_CONFIG,
             lib_src_paths=CMSIS_SRC_PATHS,
+            lib_headers=CMSIS_HEADERS,
             lib_include_paths=CMSIS_INCLUDE_PATHS + [CIFAR10_INCLUDE_PATH])
         micro_func = micro_mod['arm_cifar10_cnn_wrapper']
         ctx = tvm.micro_dev(0)
@@ -183,20 +204,21 @@ def gen_model_config(mod):
 
 
 def eval_micro(samples, time_overhead):
-    USE_TUNED_SCHEDULES = True
+    # USE_TUNED_SCHEDULES = True
+    USE_TUNED_SCHEDULES = False
     USE_RANDOM_PARAMS = True
 
-    DEV_CONFIG['mem_layout'] = stm32f746xx.gen_mem_layout(OrderedDict([
-        #('text', (19000, MemConstraint.ABSOLUTE_BYTES)),
-        ('text', (28000, MemConstraint.ABSOLUTE_BYTES)),
-        ('rodata', (100, MemConstraint.ABSOLUTE_BYTES)),
-        ('data', (100, MemConstraint.ABSOLUTE_BYTES)),
-        ('bss', (600, MemConstraint.ABSOLUTE_BYTES)),
-        ('args', (4096, MemConstraint.ABSOLUTE_BYTES)),
-        ('heap', (100.0, MemConstraint.WEIGHT)),
-        ('workspace', (132000, MemConstraint.ABSOLUTE_BYTES)),
-        ('stack', (128, MemConstraint.ABSOLUTE_BYTES)),
-        ]))
+    MICRO_SEC_CONSTRAINTS = {
+        'text': (28000, MemConstraint.ABSOLUTE_BYTES),
+        'rodata': (100, MemConstraint.ABSOLUTE_BYTES),
+        'data': (100, MemConstraint.ABSOLUTE_BYTES),
+        'bss': (600, MemConstraint.ABSOLUTE_BYTES),
+        'args': (4096, MemConstraint.ABSOLUTE_BYTES),
+        'heap': (100.0, MemConstraint.WEIGHT),
+        'workspace': (132000, MemConstraint.ABSOLUTE_BYTES),
+        'stack': (128, MemConstraint.ABSOLUTE_BYTES),
+    }
+    DEV_CONFIG = generate_config(MICRO_SEC_CONSTRAINTS)
     reset_gdbinit(DEV_CONFIG)
 
     # per-conv op strategies (first entry is the strategy of the first conv and so on).
@@ -238,15 +260,16 @@ def eval_micro(samples, time_overhead):
         use_random_params=USE_RANDOM_PARAMS)
     if not USE_TUNED_SCHEDULES:
         model_config = gen_model_config(mod)
-    print('[Initting]')
+    LOGGER.debug('[Initting]')
     with micro.Session(DEV_CONFIG) as sess:
-        print('[Building]')
+        LOGGER.debug('[Building]')
         def build_graph_mod():
             return relay_micro_build(
                 mod['main'],
                 DEV_CONFIG, TARGET,
                 params=params,
-                lib_include_paths=CMSIS_INCLUDE_PATHS)
+                lib_headers=MICRO_HEADERS,
+                lib_include_paths=MICRO_INCLUDE_PATHS)
 
         with TARGET:
             if USE_TUNED_SCHEDULES:
@@ -271,7 +294,7 @@ def eval_micro(samples, time_overhead):
             assert data_np.shape == get_const_tuple(mod['main'].params[0].checked_type.shape)
 
             # execute with `image` as the input
-            print('[Executing]')
+            LOGGER.debug('[Executing]')
             sess.get_last_batch_time()
             ctx = tvm.micro_dev(0)
             ctx.sync()
@@ -315,7 +338,7 @@ def save_outputs_json(outputs, path):
 
 
 def main():
-    time_overhead = get_comm_overhead(DEV_CONFIG, num_trials=5)
+    time_overhead = get_comm_overhead(generate_config(), num_trials=5)
     LOGGER.info(f'time overhead is {time_overhead}ms')
     # time_overhead = 0.0
 
@@ -334,21 +357,21 @@ def main():
     #print('intrp matches CPU? ' + str(np.allclose(intrp_output_np.astype('float32'), cpu_graph_output_np.astype('float32'))))
     #print('micro matches intrp? ' + str(np.allclose(micro_output_np.astype('float32'), intrp_output_np.astype('float32'))))
 
-    with open('cifar10_cnn.log', 'r') as f:
-        print(f.read())
+    # with open('cifar10_cnn.log', 'r') as f:
+    #     print(f.read())
 
-    if micro_eval.util.DEBUG_MODE:
-        micro_outputs = load_outputs('/home/lweber/microtvm-blogpost-eval/debug/micro/_tvmdbg_ctx_MICRO_DEV_0/output_tensors.params')
-        save_outputs_json(micro_outputs, 'micro_output.json')
+    # if micro_eval.util.DEBUG_MODE:
+    #     micro_outputs = load_outputs('/home/lweber/microtvm-blogpost-eval/debug/micro/_tvmdbg_ctx_MICRO_DEV_0/output_tensors.params')
+    #     save_outputs_json(micro_outputs, 'micro_output.json')
 
-        print(f'micro output keys: {micro_outputs.keys()}')
-        for key in micro_outputs.keys():
-            micro_val = micro_outputs[key]
-            print()
-            print()
-            print(f'=================[{key}]===================')
-            print(micro_val)
-            input('========================================')
+    #     print(f'micro output keys: {micro_outputs.keys()}')
+    #     for key in micro_outputs.keys():
+    #         micro_val = micro_outputs[key]
+    #         print()
+    #         print()
+    #         print(f'=================[{key}]===================')
+    #         print(micro_val)
+    #         input('========================================')
 
     #if micro_eval.util.DEBUG_MODE:
     #    cpu_outputs = load_outputs('/home/lweber/microtvm-blogpost-eval/debug/cpu/_tvmdbg_ctx_CPU_0/output_tensors.params')
