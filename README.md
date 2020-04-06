@@ -14,11 +14,19 @@ for i in range(10):
 - Export a `MICRO_GDB_INIT_DIR` env var, so a `.gdbinit` file can be created to debug device execution.
 
 ## Arm STM32
-- TODO add Arm GCC install instructions
+- Download [CMSIS](https://github.com/ARM-software/CMSIS_5).
+  - Check out the hash `b5ef1c9be72f4263ca56e9cdd457e0bf4cb29775`, corresponding to version ???
+  - Export an environment variable `CMSIS_PATH=/path/to/CMSIS_5`.
+- Download the [Arm embedded toolchain](https://developer.arm.com/tools-and-software/open-source-software/developer-tools/gnu-toolchain/gnu-rm/downloads) for your host machine.
 - Install OpenOCD.
   - Easiest route is via your distro's package manager (e.g., `apt-get install openocd`).
-- Connect the board to your machine via USB-JTAG.
-- Run `openocd -f /usr/share/openocd/scripts/interface/stlink-v2-1.cfg -f /usr/share/openocd/scripts/target/stm32f7x.cfg`.
+  - Connect the board to your machine via USB-JTAG.
+  - Create an OpenOCD config file `board.cfg` with the following contents:
+  ```
+  source [find interface/stlink-v2-1.cfg]
+  source [find target/stm32f7x.cfg]
+  ```
+- Run `openocd -f /path/to/board.cfg`.
 - You should first try to run the µTVM tests.
   - Navigate to your local TVM repo and find the file `tests/python/unittest/test_runtime_micro.py`.
   - Near the top, you will see an assignment `DEV_CONFIG = micro.device.host.generate_config()`.
@@ -45,10 +53,31 @@ Debug: 264 19 libusb1_common.c:65 string_descriptor_equal(): Device serial numbe
 ```
 In the case above, `066EFF545057717867150931` is the serial number.
 You then need to create an OpenOCD config file that makes use of this serial number.
+The reason why we need separate configs is so you can bind each openocd instance to different gdb, tcl, and telnet ports.
+Make a config for each board.
+Here's an example of configs for two different boards:
+board0.cfg:
+```
+source [find interface/stlink-v2-1.cfg]
+source [find target/stm32f7x.cfg]
+hla_serial 066EFF545057717867150931
 
-TODO reason why we need separate configs is so you can bind each openocd instance to different gdb, tcl, and telnet ports.
+gdb_port 3333
+tcl_port 6666
+telnet_port 4444
+```
+board1.cfg:
+```
+source [find interface/stlink-v2-1.cfg]
+source [find target/stm32f7x.cfg]
+hla_serial 066BFF485157717867193328
 
-- TODO add `arm-openocd` instructions
+gdb_port 3334
+tcl_port 6667
+telnet_port 4445
+```
+- You will need to launch an OpenOCD instance for each board.
+  - For board 0, run `openocd -f /path/to/board0.cfg`, for board 1, run `openocd -f /path/to/board1.cfg` in a *separate* terminal, etc.
 
 ## RISC-V Spike
 - During installation of each of the projects below, you may want to `git checkout` to a stable commit in them (e.g., the latest release in the repo's "releases" tab).  In my experience, the `master` branch doesn't have much vetting, in terms of bugs.
