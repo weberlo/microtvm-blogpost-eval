@@ -6,7 +6,7 @@ from topi.nn.pad import pad
 from topi.nn.conv2d import conv2d
 from topi.generic.nn import schedule_conv2d_nhwc
 from topi.nn.util import get_pad_tuple
-from tvm.autotvm.task.topi_integration import deserialize_args
+from tvm.autotvm.task import deserialize_args
 
 from micro_eval.util import get_op_output_shape
 from micro_eval.micro_topi.cortex_m7.micro_kernel.gemm import (
@@ -33,7 +33,7 @@ conv2d_partial_im2col.default_kernel_layout = 'OIHW'
 # TODO can we phrase `im2col_batch_size` as an axis split in the schedule,
 # rather than baking it into the compute?
 
-@autotvm.register_topi_compute(conv2d, 'micro_dev', [conv2d_partial_im2col.template_key])
+@autotvm.register_topi_compute('conv2d_partial_im2col.micro_dev')
 def conv2d_partial_im2col_compute(cfg, data, kernel, strides, padding, dilation, layout, out_dtype):
     assert isinstance(strides, int) or len(strides) == 2
     assert isinstance(dilation, int) or len(dilation) == 2
@@ -136,7 +136,7 @@ def conv2d_partial_im2col_compute(cfg, data, kernel, strides, padding, dilation,
     return reshaped_conv
 
 
-@autotvm.register_topi_schedule(schedule_conv2d_nhwc, 'micro_dev', [conv2d_partial_im2col.template_key])
+@autotvm.register_topi_schedule('conv2d_partial_im2col_nhwc.micro_dev')
 def conv2d_partial_im2col_nhwc_schedule(cfg, outs):
     sched = tvm.create_schedule([x.op for x in outs])
 
@@ -179,4 +179,3 @@ def conv2d_partial_im2col_nhwc_schedule(cfg, outs):
 
     traverse_inline(sched, outs[-1].op, _callback)
     return sched
-

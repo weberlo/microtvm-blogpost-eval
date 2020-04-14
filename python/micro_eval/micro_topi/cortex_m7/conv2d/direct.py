@@ -5,7 +5,7 @@ from topi.nn.pad import pad
 from topi.nn.util import get_pad_tuple
 from topi.nn.conv2d import conv2d, conv2d_nchw, conv2d_nhwc
 from topi.generic.nn import schedule_conv2d_nhwc, schedule_conv2d_nchw
-from tvm.autotvm.task.topi_integration import deserialize_args
+from tvm.autotvm.task import deserialize_args
 
 def conv2d_direct(*args, **kwargs):
     assert not kwargs, "Do not support kwargs in template function call"
@@ -28,7 +28,7 @@ conv2d_direct.template_key = 'direct'
 conv2d_direct.default_data_layout = 'NHWC'
 conv2d_direct.default_kernel_layout = 'HWIO'
 
-@autotvm.register_topi_compute(conv2d, 'micro_dev', [conv2d_direct.template_key])
+@autotvm.register_topi_compute('conv2d_direct.micro_dev')
 def conv2d_direct_compute(*args):
     layout = args[-2]
     if layout == 'NHWC':
@@ -86,7 +86,7 @@ def _conv2d_direct_nchw_compute(cfg, data, kernel, strides, padding, dilation, l
     return conv
 
 
-@autotvm.register_topi_schedule(schedule_conv2d_nhwc, 'micro_dev', [conv2d_direct.template_key])
+@autotvm.register_topi_schedule('conv2d_direct_nhwc.micro_dev')
 def conv2d_direct_nhwc_schedule(cfg, outs):
     sched = tvm.create_schedule([x.op for x in outs])
 
@@ -135,7 +135,7 @@ def conv2d_direct_nhwc_schedule(cfg, outs):
     return sched
 
 
-@autotvm.register_topi_schedule(schedule_conv2d_nchw, 'micro_dev', ['direct'])
+@autotvm.register_topi_schedule('conv2d_direct_nchw.micro_dev')
 def conv2d_direct_nchw_schedule(cfg, outs):
     # use default schedule
     sched = tvm.create_schedule([x.op for x in outs])

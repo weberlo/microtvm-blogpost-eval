@@ -72,14 +72,14 @@ int32_t arm_cifar10_cnn_wrapper(TVMValue* arg_values, int* arg_type_codes, int32
   void* data_handle = (((TVMValue*)arg_values)[0].v_handle);
   void* output_handle = (((TVMValue*)arg_values)[1].v_handle);
 
-  //int32_t dev_type = (((TVMArray*)data_handle)[0].ctx.device_type);
-  //int32_t dev_id = (((TVMArray*)data_handle)[0].ctx.device_id);
+  //int32_t dev_type = (((DLTensor*)data_handle)[0].ctx.device_type);
+  //int32_t dev_id = (((DLTensor*)data_handle)[0].ctx.device_id);
 
-  int8_t* data = (int8_t*)(((TVMArray*)data_handle)[0].data);
-  //int64_t* data_shape = (int64_t*)(((TVMArray*)data_handle)[0].shape);
-  //int64_t* data_strides = (int64_t*)(((TVMArray*)data_handle)[0].strides);
-  int8_t* output = (int8_t*)(((TVMArray*)output_handle)[0].data);
-  //int64_t* output_shape = (int64_t*)(((TVMArray*)output_handle)[0].shape);
-  //int64_t* output_strides = (int64_t*)(((TVMArray*)output_handle)[0].strides);
+  int8_t* data = (int8_t*)(((DLTensor*)data_handle)[0].data);
+  //int64_t* data_shape = (int64_t*)(((DLTensor*)data_handle)[0].shape);
+  //int64_t* data_strides = (int64_t*)(((DLTensor*)data_handle)[0].strides);
+  int8_t* output = (int8_t*)(((DLTensor*)output_handle)[0].data);
+  //int64_t* output_shape = (int64_t*)(((DLTensor*)output_handle)[0].shape);
+  //int64_t* output_strides = (int64_t*)(((DLTensor*)output_handle)[0].strides);
   return run_nn(data, output);
 }

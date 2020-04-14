@@ -5,7 +5,7 @@ from topi.nn.pad import pad
 from topi.nn.conv2d import conv2d, conv2d_nchw, conv2d_nhwc
 from topi.generic.nn import schedule_conv2d_nhwc
 from topi.nn.util import get_pad_tuple
-from tvm.autotvm.task.topi_integration import deserialize_args
+from tvm.autotvm.task import deserialize_args
 
 from micro_eval.micro_topi.cortex_m7.micro_kernel.gemm import (
         intrin_gemm_MxKxN, gemm_MxKxN_impl,
@@ -28,7 +28,7 @@ conv2d_direct_simd.template_key = 'direct_simd'
 conv2d_direct_simd.default_data_layout = 'NHWC'
 conv2d_direct_simd.default_kernel_layout = 'HWOI'
 
-@autotvm.register_topi_compute(conv2d, 'micro_dev', [conv2d_direct_simd.template_key])
+@autotvm.register_topi_compute('conv2d_direct_simd.micro_dev')
 def conv2d_direct_simd_compute(cfg, data, kernel, strides, padding, dilation, layout, out_dtype):
     assert isinstance(strides, int) or len(strides) == 2
     assert isinstance(dilation, int) or len(dilation) == 2
@@ -96,7 +96,7 @@ def conv2d_direct_simd_compute(cfg, data, kernel, strides, padding, dilation, la
     return conv
 
 
-@autotvm.register_topi_schedule(schedule_conv2d_nhwc, 'micro_dev', [conv2d_direct_simd.template_key])
+@autotvm.register_topi_schedule('conv2d_direct_simd_nhwc.micro_dev')
 def conv2d_direct_simd_nhwc_schedule(cfg, outs):
     sched = tvm.create_schedule([x.op for x in outs])
 

@@ -114,7 +114,7 @@ from micro_eval.micro_topi.cortex_m7.conv2d.partial_im2col import conv2d_partial
 logging.getLogger('autotvm').setLevel(logging.DEBUG)
 logging.getLogger('autotvm').addHandler(logging.StreamHandler(sys.stdout))
 
-DEV_CONFIG = micro.device.arm.stm32f746xx.default_config('127.0.0.1', 6666)
+DEV_CONFIG = micro.device.arm.stm32f746xx.generate_config('127.0.0.1', 6666)
 
 DEVICE_ID = 'arm.stm32f746xx'
 TARGET = tvm.target.create('c -device=micro_dev')
@@ -274,7 +274,11 @@ def update_rpc_server_dev_cfg(template_key):
     # the dev config the RPC servers use (only works if the script that restarts the RPC
     # server upon file modification is used)
     if template_key == 'direct':
-        DEV_CONFIG['mem_layout'] = micro.device.arm.stm32f746xx.gen_mem_layout(OrderedDict([
+        DEV_CONFIG['mem_layout'] = micro.device.arm.stm32f746xx.gen_mem_layout(
+            micro.device.arm.stm32f746xx.BASE_ADDR,
+            micro.device.arm.stm32f746xx.AVAILABLE_MEM,
+            micro.device.arm.stm32f746xx.WORD_SIZE,
+            OrderedDict([
             ('text', (18000, MemConstraint.ABSOLUTE_BYTES)),
             ('rodata', (100, MemConstraint.ABSOLUTE_BYTES)),
             ('data', (100, MemConstraint.ABSOLUTE_BYTES)),
@@ -286,7 +290,11 @@ def update_rpc_server_dev_cfg(template_key):
             ('stack', (128, MemConstraint.ABSOLUTE_BYTES)),
         ]))
     elif template_key == 'direct_simd':
-        DEV_CONFIG['mem_layout'] = micro.device.arm.stm32f746xx.gen_mem_layout(OrderedDict([
+        DEV_CONFIG['mem_layout'] = micro.device.arm.stm32f746xx.gen_mem_layout(
+            micro.device.arm.stm32f746xx.BASE_ADDR,
+            micro.device.arm.stm32f746xx.AVAILABLE_MEM,
+            micro.device.arm.stm32f746xx.WORD_SIZE,
+            OrderedDict([
             ('text', (18000, MemConstraint.ABSOLUTE_BYTES)),
             ('rodata', (100, MemConstraint.ABSOLUTE_BYTES)),
             ('data', (100, MemConstraint.ABSOLUTE_BYTES)),
@@ -297,7 +305,11 @@ def update_rpc_server_dev_cfg(template_key):
             ('stack', (128, MemConstraint.ABSOLUTE_BYTES)),
         ]))
     elif template_key == 'partial_im2col':
-        DEV_CONFIG['mem_layout'] = micro.device.arm.stm32f746xx.gen_mem_layout(OrderedDict([
+        DEV_CONFIG['mem_layout'] = micro.device.arm.stm32f746xx.gen_mem_layout(
+            micro.device.arm.stm32f746xx.BASE_ADDR,
+            micro.device.arm.stm32f746xx.AVAILABLE_MEM,
+            micro.device.arm.stm32f746xx.WORD_SIZE,
+            OrderedDict([
             ('text', (18000, MemConstraint.ABSOLUTE_BYTES)),
             ('rodata', (100, MemConstraint.ABSOLUTE_BYTES)),
             ('data', (100, MemConstraint.ABSOLUTE_BYTES)),
@@ -314,7 +326,7 @@ def update_rpc_server_dev_cfg(template_key):
     dev_config_base = os.environ['MICRO_RPC_SERVER_DEV_CONFIG_BASE']
     for i in range(10):
         DEV_CONFIG['server_port'] = 6666 + i
-        with open(f'{RPC_SERVER_DEV_CONFIG_BASE}/{i}/utvm_dev_config.json', 'w') as f:
+        with open(f'{dev_config_base}/{i}/utvm_dev_config.json', 'w') as f:
             json.dump(DEV_CONFIG, f, indent=4)
 
 

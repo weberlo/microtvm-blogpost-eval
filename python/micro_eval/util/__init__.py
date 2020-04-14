@@ -205,9 +205,8 @@ def relay_micro_build(func, dev_config, target, params=None, lib_headers=None, l
         graph runtime module for the target device
 
     """
-    with relay.build_config(opt_level=3, disabled_pass={"AlterOpLayout"}):
-        with tvm.build_config(disable_vectorize=True):
-            graph, c_mod, params = relay.build(func, target=target, params=params)
+    with tvm.target.build_config(opt_level=3, disable_vectorize=True):
+        graph, c_mod, params = relay.build(func, target=target, params=params)
     micro_mod = micro.create_micro_mod(c_mod, dev_config, lib_headers=lib_headers, lib_include_paths=lib_include_paths)
     ctx = tvm.micro_dev(0)
     if DEBUG_MODE:

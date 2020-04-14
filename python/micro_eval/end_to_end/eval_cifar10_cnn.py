@@ -50,6 +50,7 @@ LOGGER = get_logger('cifar10_cnn.log')
 LOGGER.info(f'[{datetime.datetime.now()}]')
 
 TARGET = tvm.target.create('c -device=micro_dev')
+print('target', TARGET.keys)
 DEVICE_ID = stm32f746xx.DEVICE_ID
 # DEVICE_ID = host.DEVICE_ID
 SERVER_ADDR = '127.0.0.1'
@@ -115,7 +116,7 @@ NUM_SAMPLES = 10
 
 def eval_cmsis(samples, time_overhead):
     CMSIS_SEC_CONTRAINTS = {
-        'text': (16000, MemConstraint.ABSOLUTE_BYTES),
+        'text': (20000, MemConstraint.ABSOLUTE_BYTES),
         'rodata': (4096, MemConstraint.ABSOLUTE_BYTES),
         'data': (100000, MemConstraint.ABSOLUTE_BYTES),
         'bss': (644, MemConstraint.ABSOLUTE_BYTES),
@@ -198,8 +199,10 @@ def gen_model_config(mod):
     assert len(convs) == 3
     result = {}
     result[(TARGET, convs[0])] = FallbackConfigEntity()
-    result[(TARGET, convs[1])] = gen_direct_simd_cfg(8, 32, 8)
-    result[(TARGET, convs[2])] = gen_direct_simd_cfg(8, 32, 8)
+    result[(TARGET, convs[1])] = FallbackConfigEntity()
+    result[(TARGET, convs[2])] = FallbackConfigEntity()
+#    result[(TARGET, convs[1])] = gen_direct_simd_cfg(8, 32, 8)
+#    result[(TARGET, convs[2])] = gen_direct_simd_cfg(8, 32, 8)
     return result
 
 
@@ -210,12 +213,12 @@ def eval_micro(samples, time_overhead):
 
     MICRO_SEC_CONSTRAINTS = {
         'text': (28000, MemConstraint.ABSOLUTE_BYTES),
-        'rodata': (100, MemConstraint.ABSOLUTE_BYTES),
-        'data': (100, MemConstraint.ABSOLUTE_BYTES),
+        'rodata': (300, MemConstraint.ABSOLUTE_BYTES),
+        'data': (0x80, MemConstraint.ABSOLUTE_BYTES),
         'bss': (600, MemConstraint.ABSOLUTE_BYTES),
         'args': (4096, MemConstraint.ABSOLUTE_BYTES),
         'heap': (100.0, MemConstraint.WEIGHT),
-        'workspace': (132000, MemConstraint.ABSOLUTE_BYTES),
+        'workspace': (145000, MemConstraint.ABSOLUTE_BYTES),
         'stack': (128, MemConstraint.ABSOLUTE_BYTES),
     }
     DEV_CONFIG = generate_config(MICRO_SEC_CONSTRAINTS)
@@ -230,8 +233,10 @@ def eval_micro(samples, time_overhead):
         # conv2d_direct_simd,
         # conv2d_direct_simd,
         conv2d_direct,
-        conv2d_direct_simd,
-        conv2d_direct_simd,
+        conv2d_direct,
+        conv2d_direct,
+#        conv2d_direct_simd,
+#        conv2d_direct_simd,
         ]
     data_layout = OP_STRATEGIES[0].default_data_layout
     kernel_layouts = []
@@ -344,7 +349,7 @@ def main():
 
     samples = get_sample_points(NUM_SAMPLES)
     eval_cmsis(samples, time_overhead)
-    eval_micro(samples, time_overhead)
+#    eval_micro(samples, time_overhead)
 
     #with relay.build_config(opt_level=3, disabled_pass={"AlterOpLayout"}):
     #    intrp_output_np = eval_relay_intrp(

@@ -35,6 +35,7 @@ class ManualConfigContext(DispatchContext):
 
     def _query_inside(self, target, workload):
         key = (target, workload)
+#        print('have configs', '\n'.join([repr(x) for x in self._query_to_config.keys()]))
         assert key in self._query_to_config, f'unknown query `{key}` encountered'
         return self._query_to_config[key]
 
@@ -75,16 +76,16 @@ def collect_conv_workloads(func):
         def visit_call(self, call):
             if isinstance(call.op, relay.op.op.Op) and 'conv2d' in call.op.name:
                 data_type = call.args[0].checked_type
-                data_ser = list(get_const_tuple(data_type.shape)) + [data_type.dtype]
+                data_ser = ['TENSOR', list(get_const_tuple(data_type.shape)), data_type.dtype]
                 kernel_type = call.args[1].checked_type
-                kernel_ser = list(get_const_tuple(kernel_type.shape)) + [kernel_type.dtype]
+                kernel_ser = ['TENSOR', list(get_const_tuple(kernel_type.shape)), kernel_type.dtype]
                 serialized_attrs = [
                     call.attrs[key]
-                    for key in ['strides', 'padding', 'dilation', 'data_layout', 'out_dtype']]
+                    for key in ['strides', 'padding', 'dilation', 'out_dtype']]
                 for i, attr in enumerate(serialized_attrs):
                     if isinstance(attr, tvm.container.Array):
                         serialized_attrs[i] = get_const_tuple(attr)
-                workload = ['conv2d'] + [data_ser] + [kernel_ser] + serialized_attrs
+                workload = ['conv2d_nhwc_spatial_pack.arm_cpu'] + [data_ser] + [kernel_ser] + serialized_attrs
                 # prepend the workload, because the traversal order is from the
                 # end of the network to the beginning (it's a chain of calls
                 # where the outermost call is the result of the net and each
