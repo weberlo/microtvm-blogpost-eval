@@ -265,8 +265,8 @@ def custom_pick_best(in_log_file_name, out_log_file_name, top_k=1):
     with open(in_log_file_name, 'r') as f:
         for line in f:
             entry = json.loads(line)
-            workload = gen_workload_desc_from_task(entry['i'])
-            entry['i'][4] = workload
+            workload = gen_workload_desc_from_task(entry['input'])
+            entry['input'][4] = workload
             hashable_workload = deep_tuple(workload)
             if hashable_workload not in workload_to_best:
                 workload_to_best[hashable_workload] = []

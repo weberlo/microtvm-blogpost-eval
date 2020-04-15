@@ -55,7 +55,7 @@ from topi.nn.util import get_pad_tuple
 from topi.util import simplify, get_const_tuple, traverse_inline
 
 from micro_eval.util import (
-    CMSIS_PATH, CMSIS_INCLUDE_PATHS,
+    CMSIS_PATH, CMSIS_HEADERS, CMSIS_INCLUDE_PATHS,
     NamedTensor, NamedType, BakedType,
     print_c_source,
     custom_pick_best,
@@ -114,17 +114,26 @@ from micro_eval.micro_topi.cortex_m7.conv2d.partial_im2col import conv2d_partial
 logging.getLogger('autotvm').setLevel(logging.DEBUG)
 logging.getLogger('autotvm').addHandler(logging.StreamHandler(sys.stdout))
 
-DEV_CONFIG = micro.device.arm.stm32f746xx.generate_config('127.0.0.1', 6666)
+DEV_CONFIG = micro.device.arm.stm32f746xx.generate_config('127.0.0.1', 6666, section_constraints={
+    'text': (50000, MemConstraint.ABSOLUTE_BYTES),
+    'rodata': (100, MemConstraint.ABSOLUTE_BYTES),
+    'data': (100, MemConstraint.ABSOLUTE_BYTES),
+    'bss': (600, MemConstraint.ABSOLUTE_BYTES),
+    'args': (4096, MemConstraint.ABSOLUTE_BYTES),
+    'heap': (100.0, MemConstraint.WEIGHT),
+    'workspace': (100000, MemConstraint.ABSOLUTE_BYTES),
+    'stack': (32, MemConstraint.ABSOLUTE_BYTES),
+})
 
 DEVICE_ID = 'arm.stm32f746xx'
 TARGET = tvm.target.create('c -device=micro_dev')
 
 # N_TRIAL = 1500
 # EARLY_STOPPING = 800
-N_TRIAL = 500
-EARLY_STOPPING = 250
-# N_TRIAL = 1
-# EARLY_STOPPING = 1
+# N_TRIAL = 500
+# EARLY_STOPPING = 250
+N_TRIAL = 10
+EARLY_STOPPING = 10
 
 N_PER_TRIAL = 15
 
@@ -197,11 +206,12 @@ def tune_model(tasks, log_file_name):
 
     print('[Tuning]')
 
-    measure_option = autotvm.measure_option(
-            builder=autotvm.LocalBuilder(
-                build_func=tvm.micro.cross_compiler(DEV_CONFIG, micro.LibType.OPERATOR, lib_include_paths=CMSIS_INCLUDE_PATHS)),
-            runner=autotvm.RPCRunner(DEVICE_ID, TRACKER_ADDR, TRACKER_PORT, n_parallel=n_parallel, number=N_PER_TRIAL, timeout=TIMEOUT)
-            )
+    builder = autotvm.LocalBuilder(
+                build_func=tvm.micro.cross_compiler(DEV_CONFIG, micro.LibType.OPERATOR, lib_headers=CMSIS_HEADERS, lib_include_paths=CMSIS_INCLUDE_PATHS))
+    builder.build_kwargs.setdefault('build_option', {})['disable_vectorize'] = True
+    runner = autotvm.RPCRunner(DEVICE_ID, TRACKER_ADDR, TRACKER_PORT, n_parallel=n_parallel, number=N_PER_TRIAL, timeout=TIMEOUT)
+
+    measure_option = autotvm.measure_option(builder=builder, runner=runner)
 
     # create tmp log file
     tmp_log_file = log_file_name + '.tmp'
@@ -231,8 +241,8 @@ def tune_model(tasks, log_file_name):
     #    print(f'  task {i}: {best_config}')
 
     # store best record in a cache file
-    #autotvm.record.pick_best(tmp_log_file, log_file_name)
-    custom_pick_best(tmp_log_file, log_file_name, top_k=5)
+    autotvm.record.pick_best(tmp_log_file, log_file_name)
+#    custom_pick_best(tmp_log_file, log_file_name, top_k=5)
     os.remove(tmp_log_file)
 
 
@@ -279,14 +289,14 @@ def update_rpc_server_dev_cfg(template_key):
             micro.device.arm.stm32f746xx.AVAILABLE_MEM,
             micro.device.arm.stm32f746xx.WORD_SIZE,
             OrderedDict([
-            ('text', (18000, MemConstraint.ABSOLUTE_BYTES)),
+            ('text', (28000, MemConstraint.ABSOLUTE_BYTES)),
             ('rodata', (100, MemConstraint.ABSOLUTE_BYTES)),
             ('data', (100, MemConstraint.ABSOLUTE_BYTES)),
             ('bss', (600, MemConstraint.ABSOLUTE_BYTES)),
             ('args', (4096, MemConstraint.ABSOLUTE_BYTES)),
             ('heap', (100.0, MemConstraint.WEIGHT)),
-            #('workspace', (132000, MemConstraint.ABSOLUTE_BYTES)),
-            ('workspace', (13000, MemConstraint.ABSOLUTE_BYTES)),
+            ('workspace', (132000, MemConstraint.ABSOLUTE_BYTES)),
+            #('workspace', (13000, MemConstraint.ABSOLUTE_BYTES)),
             ('stack', (128, MemConstraint.ABSOLUTE_BYTES)),
         ]))
     elif template_key == 'direct_simd':
@@ -301,7 +311,7 @@ def update_rpc_server_dev_cfg(template_key):
             ('bss', (600, MemConstraint.ABSOLUTE_BYTES)),
             ('args', (4096, MemConstraint.ABSOLUTE_BYTES)),
             ('heap', (100.0, MemConstraint.WEIGHT)),
-            ('workspace', (13000, MemConstraint.ABSOLUTE_BYTES)),
+            ('workspace', (132000, MemConstraint.ABSOLUTE_BYTES)),
             ('stack', (128, MemConstraint.ABSOLUTE_BYTES)),
         ]))
     elif template_key == 'partial_im2col':
@@ -334,26 +344,26 @@ def get_tasks(template_key):
     from tvm.autotvm.task.topi_integration import TaskExtractEnv
     TaskExtractEnv()
 
-    if template_key == 'direct':
-        @autotvm.task.register('topi_nn_conv2d', override=True)
-        def _conv2d_direct(*args, **kwargs):
-            return conv2d_direct(*args, **kwargs)
-        data_layout = conv2d_direct.default_data_layout
-        kernel_layout = conv2d_direct.default_kernel_layout
-    elif template_key == 'direct_simd':
-        @autotvm.task.register('topi_nn_conv2d', override=True)
-        def _conv2d_direct_simd(*args, **kwargs):
-            return conv2d_direct_simd(*args, **kwargs)
-        data_layout = conv2d_direct_simd.default_data_layout
-        kernel_layout = conv2d_direct_simd.default_kernel_layout
-    elif template_key == 'partial_im2col':
-        @autotvm.task.register('topi_nn_conv2d', override=True)
-        def _conv2d_partial_im2col(*args, **kwargs):
-            return conv2d_partial_im2col(*args, **kwargs)
-        data_layout = conv2d_partial_im2col.default_data_layout
-        kernel_layout = conv2d_partial_im2col.default_kernel_layout
-    else:
-        assert False
+    # if template_key == 'direct':
+    #     @autotvm.task.register('topi_nn_conv2d', override=True)
+    #     def _conv2d_direct(*args, **kwargs):
+    #         return conv2d_direct(*args, **kwargs)
+    #     data_layout = conv2d_direct.default_data_layout
+    #     kernel_layout = conv2d_direct.default_kernel_layout
+    # elif template_key == 'direct_simd':
+    #     @autotvm.task.register('topi_nn_conv2d', override=True)
+    #     def _conv2d_direct_simd(*args, **kwargs):
+    #         return conv2d_direct_simd(*args, **kwargs)
+    #     data_layout = conv2d_direct_simd.default_data_layout
+    #     kernel_layout = conv2d_direct_simd.default_kernel_layout
+    # elif template_key == 'partial_im2col':
+    #     @autotvm.task.register('topi_nn_conv2d', override=True)
+    #     def _conv2d_partial_im2col(*args, **kwargs):
+    #         return conv2d_partial_im2col(*args, **kwargs)
+    #     data_layout = conv2d_partial_im2col.default_data_layout
+    #     kernel_layout = conv2d_partial_im2col.default_kernel_layout
+    # else:
+    #     assert False
 
     #from mxnet.gluon.model_zoo.vision import get_model
     #block = get_model('mobilenetv2_0.25', pretrained=True)
@@ -361,10 +371,15 @@ def get_tasks(template_key):
 
     #mod, params = gen_conv2d('NHWC', 'HWOI')
 
+    data_layout = 'NHWC'
+    kernel_layout = 'HWIO'
     mod, params = gen_cifar10_cnn(
         data_layout, kernel_layout, op_strategy=template_key, use_random_params=True)
 
-    tasks = collect_conv_tasks(mod['main'], TARGET, template_key)
+
+    with tvm.target.build_config(opt_level=3, disable_vectorize=True):
+        tasks = autotvm.task.extract_from_program(mod['main'], params, TARGET)
+#    tasks = collect_conv_tasks(mod['main'], TARGET, template_key)
 
     # dumb_tasks = autotvm.task.extract_from_program(
     #     mod['main'], target=TARGET, params=params, ops=TUNE_OPS)
@@ -386,7 +401,7 @@ def get_tasks(template_key):
 
 def main():
     # TEMPLATE_KEYS = ['direct', 'direct_simd', 'partial_im2col']
-    TEMPLATE_KEYS = ['direct']
+    TEMPLATE_KEYS = ['direct_simd']
 
     for template_key in TEMPLATE_KEYS:
         log_file_name = f'{DEVICE_ID}.{template_key}.e2e.log'

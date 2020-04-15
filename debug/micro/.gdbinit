@@ -1,7 +1,7 @@
 layout src
 target remote localhost:3333
-add-symbol-file /var/folders/9y/3j808g591ln3kys4qpyl3qmc0000gn/T/tmpwrp6w9h_/relocated.obj
-add-symbol-file /var/folders/9y/3j808g591ln3kys4qpyl3qmc0000gn/T/tmpcc1g7al5/relocated.obj
+add-symbol-file /var/folders/9y/3j808g591ln3kys4qpyl3qmc0000gn/T/tmp_btfymm3/relocated.obj
+add-symbol-file /var/folders/9y/3j808g591ln3kys4qpyl3qmc0000gn/T/tmpp4lcuv65/relocated.obj
 set $pc = UTVMInit
 break UTVMDone
 

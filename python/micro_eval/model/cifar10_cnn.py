@@ -150,4 +150,3 @@ def gen_cifar10_cnn(data_layout, kernel_layouts, op_strategy='direct', use_rando
                 relay_np = orig_np
             params[name] = tvm.nd.array(relay_np, tvm.cpu(0))
     return mod, params
-

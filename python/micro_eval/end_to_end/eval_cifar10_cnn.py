@@ -37,12 +37,6 @@ from micro_eval.util import (
     reset_gdbinit, get_comm_overhead
 )
 from micro_eval.micro_topi import ManualConfigContext, ManualConfigSpace, collect_conv_workloads
-from micro_eval.micro_topi.cortex_m7.conv2d.direct import (
-    conv2d_direct, conv2d_direct_compute, conv2d_direct_nhwc_schedule
-)
-from micro_eval.micro_topi.cortex_m7.conv2d.direct_simd import (
-    conv2d_direct_simd, conv2d_direct_simd_compute, conv2d_direct_simd_nhwc_schedule
-)
 # import micro_eval.micro_topi.cortex_m7.conv2d.partial_im2col
 from micro_eval.model.cifar10_cnn import gen_cifar10_cnn
 
@@ -206,13 +200,19 @@ def gen_model_config(mod):
     return result
 
 
+KERNEL_LAYOUTS = {
+    'conv2d_direct': 'HWIO',
+    'conv2d_direct_simd': 'HWOI',
+#    'conv2d_direct_simd': 'N
+}
+
 def eval_micro(samples, time_overhead):
     # USE_TUNED_SCHEDULES = True
-    USE_TUNED_SCHEDULES = False
+    USE_TUNED_SCHEDULES = True
     USE_RANDOM_PARAMS = True
 
     MICRO_SEC_CONSTRAINTS = {
-        'text': (28000, MemConstraint.ABSOLUTE_BYTES),
+        'text': (23000, MemConstraint.ABSOLUTE_BYTES),
         'rodata': (300, MemConstraint.ABSOLUTE_BYTES),
         'data': (0x80, MemConstraint.ABSOLUTE_BYTES),
         'bss': (600, MemConstraint.ABSOLUTE_BYTES),
@@ -229,20 +229,15 @@ def eval_micro(samples, time_overhead):
     # the best strategy in the log, because certain strategy combos have a
     # memory footprint that exceeds the available memory of the device.
     OP_STRATEGIES = [
-        # conv2d_partial_im2col,
-        # conv2d_direct_simd,
-        # conv2d_direct_simd,
-        conv2d_direct,
-        conv2d_direct,
-        conv2d_direct,
-#        conv2d_direct_simd,
-#        conv2d_direct_simd,
+        'conv2d_direct_simd',
+        'conv2d_direct_simd',
+        'conv2d_direct_simd',
         ]
-    data_layout = OP_STRATEGIES[0].default_data_layout
+    data_layout = 'NHWC'
     kernel_layouts = []
     for strat in OP_STRATEGIES:
-        assert strat.default_data_layout == data_layout, 'data layouts for all convs must agree'
-        kernel_layouts.append(strat.default_kernel_layout)
+#        assert DATA_LAYOUTS[strat] == data_layout, 'data layouts for all convs must agree'
+        kernel_layouts.append(KERNEL_LAYOUTS[strat])
 
     # USE_SIMD = True
     # if USE_SIMD:
@@ -253,18 +248,21 @@ def eval_micro(samples, time_overhead):
     #     KERNEL_LAYOUTS = 'HWIO'
 
     DEVICE_ID = 'arm.stm32f746xx'
-    E2E_LOG_FILE_NAME = f'{DEVICE_ID}.e2e.log'
+    #E2E_LOG_FILE_NAME = f'{DEVICE_ID}.e2e.log'
+
     # E2E_LOG_FILE_NAME = f'autotvm_logs/pre_simd/{DEVICE_ID}.e2e.log.manually_fixed'
 
     # op_strategy = 'direct_simd'
-    op_strategy = 'direct'
+    HAS_SIMD_STRATEGY = any(s == 'conv2d_direct_simd' for s in OP_STRATEGIES)
+    op_strategy = 'direct_simd' if HAS_SIMD_STRATEGY else 'direct'
+    E2E_LOG_FILE_NAME = f'{DEVICE_ID}.{op_strategy}.e2e.log'
     # op_strategy = 'direct_simd' if USE_SIMD else 'direct'
     mod, params = gen_cifar10_cnn(
         data_layout, kernel_layouts,
         op_strategy=op_strategy,
         use_random_params=USE_RANDOM_PARAMS)
-    if not USE_TUNED_SCHEDULES:
-        model_config = gen_model_config(mod)
+#    if not USE_TUNED_SCHEDULES:
+#        model_config = gen_model_config(mod)
     LOGGER.debug('[Initting]')
     with micro.Session(DEV_CONFIG) as sess:
         LOGGER.debug('[Building]')
@@ -281,8 +279,8 @@ def eval_micro(samples, time_overhead):
                 with autotvm.apply_history_best(E2E_LOG_FILE_NAME):
                     graph_mod = build_graph_mod()
             else:
-                with ManualConfigContext(model_config):
-                    graph_mod = build_graph_mod()
+ #               with ManualConfigContext(model_config):
+                graph_mod = build_graph_mod()
 
         if USE_TUNED_SCHEDULES:
             LOGGER.info('[[Micro Tuned]]')
@@ -291,8 +289,8 @@ def eval_micro(samples, time_overhead):
         for i, sample in enumerate(samples):
             LOGGER.info(f'[Sample {i}]')
             data_nt = sample['data']
-            # if OP_STRATEGIES[0] in (conv2d_direct_simd, conv2d_partial_im2col):
-            #     data_nt.resize(C=4)
+            if HAS_SIMD_STRATEGY:
+                 data_nt.resize(C=4)
             data_np = data_nt.with_layout(data_layout).data
             label = sample['label']
 
@@ -348,8 +346,8 @@ def main():
     # time_overhead = 0.0
 
     samples = get_sample_points(NUM_SAMPLES)
-    eval_cmsis(samples, time_overhead)
-#    eval_micro(samples, time_overhead)
+#    eval_cmsis(samples, time_overhead)
+    eval_micro(samples, time_overhead)
 
     #with relay.build_config(opt_level=3, disabled_pass={"AlterOpLayout"}):
     #    intrp_output_np = eval_relay_intrp(
