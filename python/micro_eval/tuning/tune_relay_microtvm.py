@@ -21,9 +21,12 @@ Auto-tuning convolution on ARM Cortex-M7 STM32F746 Boards
 
 TODO More docs
 """
+import argparse
+import datetime
 import json
 import logging
 import os
+import os.path
 import sys
 from collections import OrderedDict
 
@@ -130,10 +133,10 @@ TARGET = tvm.target.create('c -device=micro_dev')
 
 # N_TRIAL = 1500
 # EARLY_STOPPING = 800
-# N_TRIAL = 500
-# EARLY_STOPPING = 250
-N_TRIAL = 10
-EARLY_STOPPING = 10
+N_TRIAL = 250
+EARLY_STOPPING = 250
+# N_TRIAL = 10
+# EARLY_STOPPING = 10
 
 N_PER_TRIAL = 15
 
@@ -214,9 +217,10 @@ def tune_model(tasks, log_file_name):
     measure_option = autotvm.measure_option(builder=builder, runner=runner)
 
     # create tmp log file
-    tmp_log_file = log_file_name + '.tmp'
-    # if os.path.exists(tmp_log_file):
-    #     os.remove(tmp_log_file)
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
+    log_file_name_timestamp = f'{log_file_name}.{timestamp}'
+    tmp_log_file = f'{log_file_name_timestamp}.tmp'
+    assert not os.path.exists(tmp_log_file)
 
     for i, task in enumerate(tasks):
         #input(f'starting task {i}: ({task.name}, {task.args})')
@@ -232,18 +236,29 @@ def tune_model(tasks, log_file_name):
                     autotvm.callback.progress_bar(N_TRIAL, prefix=prefix),
                     autotvm.callback.log_to_file(tmp_log_file)])
 
-    #print("\nBest configs:")
-    #for i, task in enumerate(reversed(tasks)):
-    #    # show best config from tuning
-    #    dispatch_context = autotvm.apply_history_best(E2E_LOG_FILE_NAME)
-    #    best_config = dispatch_context.query(task.target, task.workload)
-    #    print(f'  task.target: {task.target}')
-    #    print(f'  task {i}: {best_config}')
+    return tmp_log_file
+
+
+def analyze(tasks, tmp_log_file, promote=False):
+    print("\nBest configs:")
+    for i, task in enumerate(reversed(tasks)):
+       # show best config from tuning
+       dispatch_context = autotvm.apply_history_best(tmp_log_file)
+       best_config = dispatch_context.query(task.target, task.workload)
+       print(f'  task.target: {task.target}')
+       print(f'  task {i}: {best_config}')
 
     # store best record in a cache file
-    autotvm.record.pick_best(tmp_log_file, log_file_name)
+    best_log_file = os.path.splitext(tmp_log_file)[0]
+    autotvm.record.pick_best(tmp_log_file, best_log_file)
+    if promote:
+        symlink_path, timestamp = os.path.splitext(best_log_file)
+        if os.path.lexists(symlink_path) and not os.path.islink(symlink_path):
+            os.rename(symlink_path, f'{symlink_path}.moved-aside-for-{timestamp}')
+
+        os.symlink(os.path.basename(tmp_log_file), symlink_path)
 #    custom_pick_best(tmp_log_file, log_file_name, top_k=5)
-    os.remove(tmp_log_file)
+#    os.remove(tmp_log_file)
 
 
 # def eval_model(mod, target):
@@ -274,12 +289,7 @@ def tune_model(tasks, log_file_name):
 #         return np.mean(results), np.std(results)
 
 
-def update_rpc_server_dev_cfg(template_key):
-    if 'MICRO_RPC_SERVER_DEV_CONFIG_BASE' not in os.environ:
-        # TODO: switch to logging
-        print('WARNING: `RPC_SERVER_DEV_CONFIG_BASE` not in environment. RPC server config will not be auto-updated')
-        input('[press enter to continue]')
-        return
+def update_rpc_server_dev_cfg(template_key, dev_config_base, num_ports):
     # each op strategy needs a slightly different memory layout, so we update
     # the dev config the RPC servers use (only works if the script that restarts the RPC
     # server upon file modification is used)
@@ -305,7 +315,7 @@ def update_rpc_server_dev_cfg(template_key):
             micro.device.arm.stm32f746xx.AVAILABLE_MEM,
             micro.device.arm.stm32f746xx.WORD_SIZE,
             OrderedDict([
-            ('text', (18000, MemConstraint.ABSOLUTE_BYTES)),
+            ('text', (23000, MemConstraint.ABSOLUTE_BYTES)),
             ('rodata', (100, MemConstraint.ABSOLUTE_BYTES)),
             ('data', (100, MemConstraint.ABSOLUTE_BYTES)),
             ('bss', (600, MemConstraint.ABSOLUTE_BYTES)),
@@ -333,8 +343,7 @@ def update_rpc_server_dev_cfg(template_key):
     else:
         assert False
 
-    dev_config_base = os.environ['MICRO_RPC_SERVER_DEV_CONFIG_BASE']
-    for i in range(10):
+    for i in range(num_ports):
         DEV_CONFIG['server_port'] = 6666 + i
         with open(f'{dev_config_base}/{i}/utvm_dev_config.json', 'w') as f:
             json.dump(DEV_CONFIG, f, indent=4)
@@ -372,7 +381,7 @@ def get_tasks(template_key):
     #mod, params = gen_conv2d('NHWC', 'HWOI')
 
     data_layout = 'NHWC'
-    kernel_layout = 'HWIO'
+    kernel_layout = 'HWOI'
     mod, params = gen_cifar10_cnn(
         data_layout, kernel_layout, op_strategy=template_key, use_random_params=True)
 
@@ -383,7 +392,7 @@ def get_tasks(template_key):
 
     # dumb_tasks = autotvm.task.extract_from_program(
     #     mod['main'], target=TARGET, params=params, ops=TUNE_OPS)
-    print(f'extracted {len(tasks)} tasks')
+    print(f'extracted {len(tasks)} tasks: {tasks}')
     assert len(tasks) == 3
 
     # for i in range(len(tasks)):
@@ -399,20 +408,49 @@ def get_tasks(template_key):
     return tasks
 
 
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--use-simd', action='store_true', help='Use direct_simd ops')
+    subparsers = parser.add_subparsers(dest='action')
+
+    action_parser = subparsers.add_parser('tune')
+
+    analyze_parser = subparsers.add_parser('analyze')
+    analyze_parser.add_argument('--log-file', required=True, help='path to log file to analyze')
+    analyze_parser.add_argument('--promote', action='store_true', help='promote to symlinked default')
+
+    rpc_server_dev_config_parser = subparsers.add_parser('rpc_dev_config')
+    rpc_server_dev_config_parser.add_argument('config_base', help='path to configuration file tree root')
+    rpc_server_dev_config_parser.add_argument('--num-ports', default=10, type=int, help='number of dev server config files to write')
+
+    return parser.parse_args()
+
+
+def _build_template_keys(args):
+    return ['direct_simd'] if args.use_simd else ['direct']
+
+
+def _cmd_rpc_dev_config(args):
+    for key in _build_template_keys(args):
+        update_rpc_server_dev_cfg(key, args.config_base, args.num_ports)
+
+
+def _cmd_tune(args):
+    template_keys = _build_template_keys(args)
+    tasks = get_tasks(template_keys[0])
+    log_file_name = f'{DEVICE_ID}.{template_keys[0]}.e2e.log'
+    log_file = tune_model(tasks, log_file_name)
+    analyze(tasks, log_file, promote=True)
+
+def _cmd_analyze(args):
+    template_keys = _build_template_keys(args)
+    tasks = get_tasks(template_keys[0])
+    analyze(tasks, args.log_file, promote=args.promote)
+
 def main():
-    # TEMPLATE_KEYS = ['direct', 'direct_simd', 'partial_im2col']
-    TEMPLATE_KEYS = ['direct_simd']
-
-    for template_key in TEMPLATE_KEYS:
-        log_file_name = f'{DEVICE_ID}.{template_key}.e2e.log'
-
-        update_rpc_server_dev_cfg(template_key)
-        # tasks = get_tasks(template_key)
-        tasks = [get_tasks(template_key)[0]]
-
-        tune_model(tasks, log_file_name)
-
-        assert False, 'make it so you\'re using all 3 tasks again'
+    args = parse_args()
+    globals()[f'_cmd_{args.action}'](args)
+#    assert False, 'make it so you\'re using all 3 tasks again'
 
 
 if __name__ == '__main__':
