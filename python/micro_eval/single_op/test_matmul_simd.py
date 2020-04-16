@@ -45,14 +45,14 @@ from micro_eval.util import relay_micro_build, reset_gdbinit, intrin_gemm_MxKxN,
 ################
 # CMSIS CONFIG #
 ################
-if 'CMSIS_PATH' not in os.environ:
-    raise RuntimeError('must have "CMSIS_PATH" in environment')
-CMSIS_PATH = os.environ['CMSIS_PATH']
+if 'CMSIS_NN_PATH' not in os.environ:
+    raise RuntimeError('must have "CMSIS_NN_PATH" in environment')
+CMSIS_NN_PATH = os.environ['CMSIS_NN_PATH']
 
 CMSIS_INCLUDE_PATHS = [
-    f'{CMSIS_PATH}/CMSIS/Core/Include',
-    f'{CMSIS_PATH}/CMSIS/DSP/Include',
-    f'{CMSIS_PATH}/CMSIS/NN/Include'
+    f'{CMSIS_NN_PATH}/CMSIS/Core/Include',
+    f'{CMSIS_NN_PATH}/CMSIS/DSP/Include',
+    f'{CMSIS_NN_PATH}/CMSIS/NN/Include'
 ]
 
 ###############

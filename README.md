@@ -16,7 +16,7 @@ for i in range(10):
 ## Arm STM32
 - Download [CMSIS](https://github.com/ARM-software/CMSIS_5).
   - Check out the hash `b5ef1c9be72f4263ca56e9cdd457e0bf4cb29775`, corresponding to version ???
-  - Export an environment variable `CMSIS_PATH=/path/to/CMSIS_5`.
+  - Export an environment variable `CMSIS_NN_PATH=/path/to/CMSIS_5`.
 - Download the [Arm embedded toolchain](https://developer.arm.com/tools-and-software/open-source-software/developer-tools/gnu-toolchain/gnu-rm/downloads) for your host machine.
 - Install OpenOCD.
   - Easiest route is via your distro's package manager (e.g., `apt-get install openocd`).

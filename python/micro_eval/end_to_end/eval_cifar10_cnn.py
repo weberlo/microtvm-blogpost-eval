@@ -26,7 +26,7 @@ from topi.util import get_const_tuple
 
 import micro_eval
 from micro_eval.util import (
-    CMSIS_PATH, CMSIS_HEADERS, CMSIS_INCLUDE_PATHS,
+    CMSIS_NN_PATH, CMSIS_HEADERS, CMSIS_INCLUDE_PATHS,
     MockCMod,
     get_logger,
     relay_micro_build,
@@ -91,15 +91,15 @@ def get_sample_points(n):
 CIFAR10_SRC_PATH = f'{os.path.dirname(__file__)}/../../../cmsis_src/cmsis_cifar10_cnn/cmsis_cifar10_cnn.c'
 CIFAR10_INCLUDE_PATH = f'{os.path.dirname(__file__)}/../../../cmsis_src/cmsis_cifar10_cnn'
 CMSIS_SRC_PATHS = [
-    f'{CMSIS_PATH}/CMSIS/NN/Source/ActivationFunctions/arm_relu_q7.c',
-    f'{CMSIS_PATH}/CMSIS/NN/Source/ConvolutionFunctions/arm_convolve_HWC_q7_RGB.c',
-    f'{CMSIS_PATH}/CMSIS/NN/Source/ConvolutionFunctions/arm_convolve_HWC_q7_fast.c',
-    f'{CMSIS_PATH}/CMSIS/NN/Source/ConvolutionFunctions/arm_nn_mat_mult_kernel_q7_q15_reordered.c',
-    f'{CMSIS_PATH}/CMSIS/NN/Source/ConvolutionFunctions/arm_nn_mat_mult_kernel_q7_q15.c',
-    f'{CMSIS_PATH}/CMSIS/NN/Source/FullyConnectedFunctions/arm_fully_connected_q7_opt.c',
-    f'{CMSIS_PATH}/CMSIS/NN/Source/NNSupportFunctions/arm_q7_to_q15_reordered_no_shift.c',
-    f'{CMSIS_PATH}/CMSIS/NN/Source/NNSupportFunctions/arm_q7_to_q15_no_shift.c',
-    f'{CMSIS_PATH}/CMSIS/NN/Source/PoolingFunctions/arm_pool_q7_HWC.c',
+    f'{CMSIS_NN_PATH}/CMSIS/NN/Source/ActivationFunctions/arm_relu_q7.c',
+    f'{CMSIS_NN_PATH}/CMSIS/NN/Source/ConvolutionFunctions/arm_convolve_HWC_q7_RGB.c',
+    f'{CMSIS_NN_PATH}/CMSIS/NN/Source/ConvolutionFunctions/arm_convolve_HWC_q7_fast.c',
+    f'{CMSIS_NN_PATH}/CMSIS/NN/Source/ConvolutionFunctions/arm_nn_mat_mult_kernel_q7_q15_reordered.c',
+    f'{CMSIS_NN_PATH}/CMSIS/NN/Source/ConvolutionFunctions/arm_nn_mat_mult_kernel_q7_q15.c',
+    f'{CMSIS_NN_PATH}/CMSIS/NN/Source/FullyConnectedFunctions/arm_fully_connected_q7_opt.c',
+    f'{CMSIS_NN_PATH}/CMSIS/NN/Source/NNSupportFunctions/arm_q7_to_q15_reordered_no_shift.c',
+    f'{CMSIS_NN_PATH}/CMSIS/NN/Source/NNSupportFunctions/arm_q7_to_q15_no_shift.c',
+    f'{CMSIS_NN_PATH}/CMSIS/NN/Source/PoolingFunctions/arm_pool_q7_HWC.c',
 ]
 
 ##############

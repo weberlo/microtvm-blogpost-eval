@@ -58,7 +58,7 @@ from topi.nn.util import get_pad_tuple
 from topi.util import simplify, get_const_tuple, traverse_inline
 
 from micro_eval.util import (
-    CMSIS_PATH, CMSIS_HEADERS, CMSIS_INCLUDE_PATHS,
+    CMSIS_NN_PATH, CMSIS_HEADERS, CMSIS_INCLUDE_PATHS,
     NamedTensor, NamedType, BakedType,
     print_c_source,
     custom_pick_best,

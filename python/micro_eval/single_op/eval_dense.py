@@ -39,10 +39,10 @@ DENSE_SRC_PATH = f'{os.path.dirname(__file__)}/../../../cmsis_src/cmsis_dense.c'
 
 CMSIS_INCLUDE_PATHS = get_cmsis_include_paths()
 
-CMSIS_PATH = get_cmsis_path()
+CMSIS_NN_PATH = get_cmsis_path()
 CMSIS_LIB_SRC_PATHS = [
-    f'{CMSIS_PATH}/CMSIS/NN/Source/NNSupportFunctions/arm_q7_to_q15_reordered_no_shift.c',
-    f'{CMSIS_PATH}/CMSIS/NN/Source/FullyConnectedFunctions/arm_fully_connected_q7_opt.c'
+    f'{CMSIS_NN_PATH}/CMSIS/NN/Source/NNSupportFunctions/arm_q7_to_q15_reordered_no_shift.c',
+    f'{CMSIS_NN_PATH}/CMSIS/NN/Source/FullyConnectedFunctions/arm_fully_connected_q7_opt.c'
 ]
 
 # TODO host device isn't working

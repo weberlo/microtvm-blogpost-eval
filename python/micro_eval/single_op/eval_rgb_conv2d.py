@@ -29,7 +29,7 @@ from tvm.relay import transform
 from tvm.relay import create_executor
 
 from micro_eval.util import (
-    CMSIS_PATH, CMSIS_INCLUDE_PATHS,
+    CMSIS_NN_PATH, CMSIS_INCLUDE_PATHS,
     MockCMod,
     relay_micro_build, reset_gdbinit, get_comm_overhead, benchmark_micro_func
 )
@@ -39,9 +39,9 @@ assert False, 'merge with eval_conv2d.py'
 CMSIS_CONV_SRC_PATH = f'{os.path.dirname(__file__)}/../../src/cmsis_rgb_conv2d.c'
 
 CMSIS_SRC_PATHS = [
-    f'{CMSIS_PATH}/CMSIS/NN/Source/NNSupportFunctions/arm_q7_to_q15_reordered_no_shift.c',
-    f'{CMSIS_PATH}/CMSIS/NN/Source/ConvolutionFunctions/arm_convolve_HWC_q7_RGB.c',
-    f'{CMSIS_PATH}/CMSIS/NN/Source/ConvolutionFunctions/arm_nn_mat_mult_kernel_q7_q15.c'
+    f'{CMSIS_NN_PATH}/CMSIS/NN/Source/NNSupportFunctions/arm_q7_to_q15_reordered_no_shift.c',
+    f'{CMSIS_NN_PATH}/CMSIS/NN/Source/ConvolutionFunctions/arm_convolve_HWC_q7_RGB.c',
+    f'{CMSIS_NN_PATH}/CMSIS/NN/Source/ConvolutionFunctions/arm_nn_mat_mult_kernel_q7_q15.c'
 ]
 
 from tvm.micro.device.arm import stm32f746xx

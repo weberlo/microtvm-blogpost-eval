@@ -29,16 +29,16 @@ from tvm.relay import transform
 from tvm.relay import create_executor
 
 from micro_eval.util import (
-    CMSIS_PATH, CMSIS_INCLUDE_PATHS,
+    CMSIS_NN_PATH, CMSIS_INCLUDE_PATHS,
     MockCMod,
     relay_micro_build, reset_gdbinit, get_comm_overhead, benchmark_micro_func
 )
 
 CMSIS_CONV_SRC_PATH = f'{os.path.dirname(__file__)}/../../../cmsis_src/cmsis_fast_conv2d.c'
 CMSIS_SRC_PATHS = [
-    f'{CMSIS_PATH}/CMSIS/NN/Source/NNSupportFunctions/arm_q7_to_q15_reordered_no_shift.c',
-    f'{CMSIS_PATH}/CMSIS/NN/Source/ConvolutionFunctions/arm_convolve_HWC_q7_fast.c',
-    f'{CMSIS_PATH}/CMSIS/NN/Source/ConvolutionFunctions/arm_nn_mat_mult_kernel_q7_q15_reordered.c'
+    f'{CMSIS_NN_PATH}/CMSIS/NN/Source/NNSupportFunctions/arm_q7_to_q15_reordered_no_shift.c',
+    f'{CMSIS_NN_PATH}/CMSIS/NN/Source/ConvolutionFunctions/arm_convolve_HWC_q7_fast.c',
+    f'{CMSIS_NN_PATH}/CMSIS/NN/Source/ConvolutionFunctions/arm_nn_mat_mult_kernel_q7_q15_reordered.c'
 ]
 
 from tvm.micro.device.arm import stm32f746xx

@@ -39,7 +39,7 @@ from topi.nn.util import get_pad_tuple
 from topi.util import simplify, get_const_tuple, traverse_inline
 
 from micro_eval.util import (
-    CMSIS_PATH, CMSIS_INCLUDE_PATHS,
+    CMSIS_NN_PATH, CMSIS_INCLUDE_PATHS,
     MockCMod,
     NamedTensor, NamedType, BakedType,
     print_c_source,
@@ -159,9 +159,9 @@ def eval_cmsis(sess, data_nt, kernel_nt, out_type):
 
     CMSIS_CONV_SRC_PATH = f'{os.path.dirname(__file__)}/../../../cmsis_src/cmsis_fast_conv2d.c'
     CMSIS_SRC_PATHS = [
-        f'{CMSIS_PATH}/CMSIS/NN/Source/NNSupportFunctions/arm_q7_to_q15_reordered_no_shift.c',
-        f'{CMSIS_PATH}/CMSIS/NN/Source/ConvolutionFunctions/arm_convolve_HWC_q7_fast.c',
-        f'{CMSIS_PATH}/CMSIS/NN/Source/ConvolutionFunctions/arm_nn_mat_mult_kernel_q7_q15_reordered.c'
+        f'{CMSIS_NN_PATH}/CMSIS/NN/Source/NNSupportFunctions/arm_q7_to_q15_reordered_no_shift.c',
+        f'{CMSIS_NN_PATH}/CMSIS/NN/Source/ConvolutionFunctions/arm_convolve_HWC_q7_fast.c',
+        f'{CMSIS_NN_PATH}/CMSIS/NN/Source/ConvolutionFunctions/arm_nn_mat_mult_kernel_q7_q15_reordered.c'
     ]
 
     # data_np = np.random.randint(-10, 10, size=data_type.shape, dtype=data_type.dtype)
