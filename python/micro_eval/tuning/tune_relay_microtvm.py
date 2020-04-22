@@ -27,6 +27,8 @@ import json
 import logging
 import os
 import os.path
+import signal
+import subprocess
 import sys
 from collections import OrderedDict
 
@@ -114,10 +116,10 @@ from micro_eval.micro_topi.cortex_m7.conv2d.partial_im2col import conv2d_partial
 ####################
 # Autotuning Setup #
 ####################
-logging.getLogger('autotvm').setLevel(logging.DEBUG)
+logging.getLogger('autotvm').setLevel(logging.INFO)
 logging.getLogger('autotvm').addHandler(logging.StreamHandler(sys.stdout))
 
-DEV_CONFIG = micro.device.arm.stm32f746xx.generate_config('127.0.0.1', 6666, section_constraints={
+OBJ_BUILD_CONFIG = micro.device.arm.stm32f746xx.generate_config('127.0.0.1', 6666, section_constraints={
     'text': (50000, MemConstraint.ABSOLUTE_BYTES),
     'rodata': (100, MemConstraint.ABSOLUTE_BYTES),
     'data': (100, MemConstraint.ABSOLUTE_BYTES),
@@ -133,12 +135,12 @@ TARGET = tvm.target.create('c -device=micro_dev')
 
 # N_TRIAL = 1500
 # EARLY_STOPPING = 800
-N_TRIAL = 250
-EARLY_STOPPING = 250
-# N_TRIAL = 10
-# EARLY_STOPPING = 10
-
-N_PER_TRIAL = 15
+# N_TRIAL = 250
+# EARLY_STOPPING = 250
+# N_TRIAL = 30
+# EARLY_STOPPING = 30
+# N_TRIAL = 1
+# EARLY_STOPPING = 1
 
 TRACKER_ADDR = '0.0.0.0'
 TRACKER_PORT = 9190
@@ -202,17 +204,14 @@ def get_num_devices(dev_id):
     return num_connected
 
 
-def tune_model(tasks, log_file_name):
-    n_parallel = get_num_devices(DEVICE_ID)
-    #print('FORCING N_PARALLEL TO 1')
-    #n_parallel = 1
-
+def tune_model(rpc_config_base, num_servers, num_trials, tasks, log_file_name):
     print('[Tuning]')
 
     builder = autotvm.LocalBuilder(
-                build_func=tvm.micro.cross_compiler(DEV_CONFIG, micro.LibType.OPERATOR, lib_headers=CMSIS_HEADERS, lib_include_paths=CMSIS_INCLUDE_PATHS))
+        build_func=tvm.micro.cross_compiler(OBJ_BUILD_CONFIG, micro.LibType.OPERATOR, lib_headers=CMSIS_HEADERS, lib_include_paths=CMSIS_INCLUDE_PATHS),
+        n_parallel=num_servers)
     builder.build_kwargs.setdefault('build_option', {})['disable_vectorize'] = True
-    runner = autotvm.RPCRunner(DEVICE_ID, TRACKER_ADDR, TRACKER_PORT, n_parallel=n_parallel, number=N_PER_TRIAL, timeout=TIMEOUT)
+    runner = autotvm.RPCRunner(DEVICE_ID, TRACKER_ADDR, TRACKER_PORT, n_parallel=num_servers, number=1, repeat=1, timeout=TIMEOUT)
 
     measure_option = autotvm.measure_option(builder=builder, runner=runner)
 
@@ -223,18 +222,25 @@ def tune_model(tasks, log_file_name):
     assert not os.path.exists(tmp_log_file)
 
     for i, task in enumerate(tasks):
-        #input(f'starting task {i}: ({task.name}, {task.args})')
-        prefix = "[Task %2d/%2d] " % (i+1, len(tasks))
-        #tuner = XGBTuner(task, loss_type='rank')
-        tuner = GATuner(task)
+        update_rpc_server_config(rpc_config_base, num_servers, i, task)
+        servers = launch_rpc_servers(rpc_config_base, num_servers)
+        try:
+            #input(f'starting task {i}: ({task.name}, {task.args})')
+            prefix = "[Task %2d/%2d] " % (i+1, len(tasks))
+            #tuner = XGBTuner(task, loss_type='rank')
+            tuner = GATuner(task)
 
-        # start tuning
-        tuner.tune(n_trial=min(N_TRIAL, len(task.config_space)),
-                early_stopping=EARLY_STOPPING,
-                measure_option=measure_option,
-                callbacks=[
-                    autotvm.callback.progress_bar(N_TRIAL, prefix=prefix),
-                    autotvm.callback.log_to_file(tmp_log_file)])
+            # start tuning
+            n_trial = min(num_trials, len(task.config_space))
+            tuner.tune(n_trial=n_trial,
+                       early_stopping=n_trial, #EARLY_STOPPING,
+                       measure_option=measure_option,
+                       callbacks=[
+                           autotvm.callback.progress_bar(n_trial, prefix=prefix, si_prefix='k'),
+                           autotvm.callback.log_to_file(tmp_log_file)],
+                       si_prefix='k')
+        finally:
+            stop_rpc_servers(servers)
 
     return tmp_log_file
 
@@ -253,12 +259,89 @@ def analyze(tasks, tmp_log_file, promote=False):
     autotvm.record.pick_best(tmp_log_file, best_log_file)
     if promote:
         symlink_path, timestamp = os.path.splitext(best_log_file)
-        if os.path.lexists(symlink_path) and not os.path.islink(symlink_path):
-            os.rename(symlink_path, f'{symlink_path}.moved-aside-for-{timestamp}')
+        if os.path.lexists(symlink_path):
+            if not os.path.islink(symlink_path):
+                os.rename(symlink_path, f'{symlink_path}.moved-aside-for-{timestamp}')
+            else:
+                os.unlink(symlink_path)
 
         os.symlink(os.path.basename(tmp_log_file), symlink_path)
-#    custom_pick_best(tmp_log_file, log_file_name, top_k=5)
-#    os.remove(tmp_log_file)
+
+
+def compute_rpc_server_config_file_name(dev_config_base, i):
+    return f'{dev_config_base}/{i}/utvm_dev_config.json'
+
+
+WORKSPACE_SIZE_BYTES_BY_TASK_INDEX = [132000, 132000, 10000]
+
+
+def update_rpc_server_config(config_base, num_servers, task_index, task):
+    """Update RPC server config with task-specific config."""
+    for i in range(num_servers):
+        with open(compute_rpc_server_config_file_name(config_base, i)) as f:
+            config = json.load(f)
+
+        if task.name == 'conv2d_direct.arm_cpu':
+            config['mem_layout'] = micro.device.arm.stm32f746xx.gen_mem_layout(
+                micro.device.arm.stm32f746xx.BASE_ADDR,
+                micro.device.arm.stm32f746xx.AVAILABLE_MEM,
+                micro.device.arm.stm32f746xx.WORD_SIZE,
+                OrderedDict([
+                    ('text', (28000, MemConstraint.ABSOLUTE_BYTES)),
+                    ('rodata', (100, MemConstraint.ABSOLUTE_BYTES)),
+                    ('data', (100, MemConstraint.ABSOLUTE_BYTES)),
+                    ('bss', (600, MemConstraint.ABSOLUTE_BYTES)),
+                    ('args', (4096, MemConstraint.ABSOLUTE_BYTES)),
+                    ('heap', (100.0, MemConstraint.WEIGHT)),
+                    ('workspace', (WORKSPACE_SIZE_BYTES_BY_TASK_INDEX[task_index], MemConstraint.ABSOLUTE_BYTES)),
+                    ('stack', (128, MemConstraint.ABSOLUTE_BYTES)),
+                ]))
+        elif task.name == 'conv2d_direct_simd.arm_cpu':
+            config['mem_layout'] = micro.device.arm.stm32f746xx.gen_mem_layout(
+                micro.device.arm.stm32f746xx.BASE_ADDR,
+                micro.device.arm.stm32f746xx.AVAILABLE_MEM,
+                micro.device.arm.stm32f746xx.WORD_SIZE,
+                OrderedDict([
+                    ('text', (23000, MemConstraint.ABSOLUTE_BYTES)),
+                    ('rodata', (100, MemConstraint.ABSOLUTE_BYTES)),
+                    ('data', (100, MemConstraint.ABSOLUTE_BYTES)),
+                    ('bss', (600, MemConstraint.ABSOLUTE_BYTES)),
+                    ('args', (4096, MemConstraint.ABSOLUTE_BYTES)),
+                    ('heap', (100.0, MemConstraint.WEIGHT)),
+                    ('workspace', (WORKSPACE_SIZE_BYTES_BY_TASK_INDEX[task_index], MemConstraint.ABSOLUTE_BYTES)),
+                    ('stack', (128, MemConstraint.ABSOLUTE_BYTES)),
+                ]))
+        else:
+            return
+
+        print(f'updated config for server {i}')
+        with open(compute_rpc_server_config_file_name(config_base, i), 'w') as f:
+            json.dump(config, f, indent=4)
+
+
+DEBUG_RPC_SERVER_OUTPUT = False
+
+
+def launch_rpc_servers(config_base, num_servers):
+    procs = []
+    for i in range(num_servers):
+        config = compute_rpc_server_config_file_name(config_base, i)
+        procs.append(subprocess.Popen(
+            [sys.executable, '-m', 'tvm.exec.rpc_server',
+             '--tracker=0.0.0.0:9190',
+             '--key=arm.stm32f746xx',
+             '--utvm-dev-config={}'.format(config)],
+            stdout=None if DEBUG_RPC_SERVER_OUTPUT else subprocess.DEVNULL,
+            stderr=None if DEBUG_RPC_SERVER_OUTPUT else subprocess.DEVNULL))
+    return procs
+
+
+def stop_rpc_servers(procs):
+    for p in procs:
+        p.send_signal(signal.SIGINT)
+
+    for p in procs:
+        p.wait()
 
 
 # def eval_model(mod, target):
@@ -289,7 +372,7 @@ def analyze(tasks, tmp_log_file, promote=False):
 #         return np.mean(results), np.std(results)
 
 
-def update_rpc_server_dev_cfg(template_key, dev_config_base, num_ports):
+def write_rpc_server_config(template_key, config_base, num_ports):
     # each op strategy needs a slightly different memory layout, so we update
     # the dev config the RPC servers use (only works if the script that restarts the RPC
     # server upon file modification is used)
@@ -299,47 +382,46 @@ def update_rpc_server_dev_cfg(template_key, dev_config_base, num_ports):
             micro.device.arm.stm32f746xx.AVAILABLE_MEM,
             micro.device.arm.stm32f746xx.WORD_SIZE,
             OrderedDict([
-            ('text', (28000, MemConstraint.ABSOLUTE_BYTES)),
-            ('rodata', (100, MemConstraint.ABSOLUTE_BYTES)),
-            ('data', (100, MemConstraint.ABSOLUTE_BYTES)),
-            ('bss', (600, MemConstraint.ABSOLUTE_BYTES)),
-            ('args', (4096, MemConstraint.ABSOLUTE_BYTES)),
-            ('heap', (100.0, MemConstraint.WEIGHT)),
-            ('workspace', (132000, MemConstraint.ABSOLUTE_BYTES)),
-            #('workspace', (13000, MemConstraint.ABSOLUTE_BYTES)),
-            ('stack', (128, MemConstraint.ABSOLUTE_BYTES)),
-        ]))
+                ('text', (28000, MemConstraint.ABSOLUTE_BYTES)),
+                ('rodata', (100, MemConstraint.ABSOLUTE_BYTES)),
+                ('data', (100, MemConstraint.ABSOLUTE_BYTES)),
+                ('bss', (600, MemConstraint.ABSOLUTE_BYTES)),
+                ('args', (4096, MemConstraint.ABSOLUTE_BYTES)),
+                ('heap', (100.0, MemConstraint.WEIGHT)),
+                ('workspace', (132000, MemConstraint.ABSOLUTE_BYTES)),
+                ('stack', (128, MemConstraint.ABSOLUTE_BYTES)),
+            ]))
     elif template_key == 'direct_simd':
         DEV_CONFIG['mem_layout'] = micro.device.arm.stm32f746xx.gen_mem_layout(
             micro.device.arm.stm32f746xx.BASE_ADDR,
             micro.device.arm.stm32f746xx.AVAILABLE_MEM,
             micro.device.arm.stm32f746xx.WORD_SIZE,
             OrderedDict([
-            ('text', (23000, MemConstraint.ABSOLUTE_BYTES)),
-            ('rodata', (100, MemConstraint.ABSOLUTE_BYTES)),
-            ('data', (100, MemConstraint.ABSOLUTE_BYTES)),
-            ('bss', (600, MemConstraint.ABSOLUTE_BYTES)),
-            ('args', (4096, MemConstraint.ABSOLUTE_BYTES)),
-            ('heap', (100.0, MemConstraint.WEIGHT)),
-            ('workspace', (132000, MemConstraint.ABSOLUTE_BYTES)),
-            ('stack', (128, MemConstraint.ABSOLUTE_BYTES)),
-        ]))
+                ('text', (23000, MemConstraint.ABSOLUTE_BYTES)),
+                ('rodata', (100, MemConstraint.ABSOLUTE_BYTES)),
+                ('data', (100, MemConstraint.ABSOLUTE_BYTES)),
+                ('bss', (600, MemConstraint.ABSOLUTE_BYTES)),
+                ('args', (4096, MemConstraint.ABSOLUTE_BYTES)),
+                ('heap', (100.0, MemConstraint.WEIGHT)),
+                ('workspace', (10000, MemConstraint.ABSOLUTE_BYTES)),
+                ('stack', (128, MemConstraint.ABSOLUTE_BYTES)),
+            ]))
     elif template_key == 'partial_im2col':
         DEV_CONFIG['mem_layout'] = micro.device.arm.stm32f746xx.gen_mem_layout(
             micro.device.arm.stm32f746xx.BASE_ADDR,
             micro.device.arm.stm32f746xx.AVAILABLE_MEM,
             micro.device.arm.stm32f746xx.WORD_SIZE,
             OrderedDict([
-            ('text', (18000, MemConstraint.ABSOLUTE_BYTES)),
-            ('rodata', (100, MemConstraint.ABSOLUTE_BYTES)),
-            ('data', (100, MemConstraint.ABSOLUTE_BYTES)),
-            ('bss', (600, MemConstraint.ABSOLUTE_BYTES)),
-            ('args', (4096, MemConstraint.ABSOLUTE_BYTES)),
-            ('heap', (100.0, MemConstraint.WEIGHT)),
-            ('workspace', (132000, MemConstraint.ABSOLUTE_BYTES)),
-            # ('workspace', (64000, MemConstraint.ABSOLUTE_BYTES)),
-            ('stack', (128, MemConstraint.ABSOLUTE_BYTES)),
-        ]))
+                ('text', (18000, MemConstraint.ABSOLUTE_BYTES)),
+                ('rodata', (100, MemConstraint.ABSOLUTE_BYTES)),
+                ('data', (100, MemConstraint.ABSOLUTE_BYTES)),
+                ('bss', (600, MemConstraint.ABSOLUTE_BYTES)),
+                ('args', (4096, MemConstraint.ABSOLUTE_BYTES)),
+                ('heap', (100.0, MemConstraint.WEIGHT)),
+                ('workspace', (132000, MemConstraint.ABSOLUTE_BYTES)),
+                # ('workspace', (64000, MemConstraint.ABSOLUTE_BYTES)),
+                ('stack', (128, MemConstraint.ABSOLUTE_BYTES)),
+            ]))
     else:
         assert False
 
@@ -388,6 +470,7 @@ def get_tasks(template_key):
 
     with tvm.target.build_config(opt_level=3, disable_vectorize=True):
         tasks = autotvm.task.extract_from_program(mod['main'], params, TARGET)
+
 #    tasks = collect_conv_tasks(mod['main'], TARGET, template_key)
 
     # dumb_tasks = autotvm.task.extract_from_program(
@@ -413,7 +496,10 @@ def parse_args():
     parser.add_argument('--use-simd', action='store_true', help='Use direct_simd ops')
     subparsers = parser.add_subparsers(dest='action')
 
-    action_parser = subparsers.add_parser('tune')
+    tune_parser = subparsers.add_parser('tune')
+    tune_parser.add_argument('--num-rpc-servers', type=int, default=1, help='number of rpc servers to launch, equal to number of boards')
+    tune_parser.add_argument('--rpc-server-config-base', default='microrpc-dev-config', help='path to configuration file tree root')
+    tune_parser.add_argument('--num-trials', type=int, default=500, help='number of trials to run')
 
     analyze_parser = subparsers.add_parser('analyze')
     analyze_parser.add_argument('--log-file', required=True, help='path to log file to analyze')
@@ -421,7 +507,7 @@ def parse_args():
 
     rpc_server_dev_config_parser = subparsers.add_parser('rpc_dev_config')
     rpc_server_dev_config_parser.add_argument('config_base', help='path to configuration file tree root')
-    rpc_server_dev_config_parser.add_argument('--num-ports', default=10, type=int, help='number of dev server config files to write')
+    rpc_server_dev_config_parser.add_argument('--num-rpc-servers', default=10, type=int, help='number of dev server config files to write')
 
     return parser.parse_args()
 
@@ -432,14 +518,14 @@ def _build_template_keys(args):
 
 def _cmd_rpc_dev_config(args):
     for key in _build_template_keys(args):
-        update_rpc_server_dev_cfg(key, args.config_base, args.num_ports)
+        write_rpc_server_config(key, args.config_base, args.num_ports)
 
 
 def _cmd_tune(args):
     template_keys = _build_template_keys(args)
     tasks = get_tasks(template_keys[0])
     log_file_name = f'{DEVICE_ID}.{template_keys[0]}.e2e.log'
-    log_file = tune_model(tasks, log_file_name)
+    log_file = tune_model(args.rpc_server_config_base, args.num_rpc_servers, args.num_trials, tasks, log_file_name)
     analyze(tasks, log_file, promote=True)
 
 def _cmd_analyze(args):

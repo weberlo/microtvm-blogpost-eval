@@ -189,17 +189,17 @@ TVM_DLL int32_t fused_cast_subtract_cast( void* args,  void* arg_type_ids, int32
   int32_t arg1_code = (( int32_t*)arg_type_ids)[1];
   void* arg2 = (((TVMValue*)args)[2].v_handle);
   int32_t arg2_code = (( int32_t*)arg_type_ids)[2];
-  uint8_t* placeholder = (uint8_t*)(((TVMArray*)arg0)[0].data);
-  int64_t* arg0_shape = (int64_t*)(((TVMArray*)arg0)[0].shape);
-  int64_t* arg0_strides = (int64_t*)(((TVMArray*)arg0)[0].strides);
-  int32_t dev_type = (((TVMArray*)arg0)[0].ctx.device_type);
-  int32_t dev_id = (((TVMArray*)arg0)[0].ctx.device_id);
-  int16_t* placeholder1 = (int16_t*)(((TVMArray*)arg1)[0].data);
-  int64_t* arg1_shape = (int64_t*)(((TVMArray*)arg1)[0].shape);
-  int64_t* arg1_strides = (int64_t*)(((TVMArray*)arg1)[0].strides);
-  int8_t* T_cast = (int8_t*)(((TVMArray*)arg2)[0].data);
-  int64_t* arg2_shape = (int64_t*)(((TVMArray*)arg2)[0].shape);
-  int64_t* arg2_strides = (int64_t*)(((TVMArray*)arg2)[0].strides);
+  uint8_t* placeholder = (uint8_t*)(((DLTensor*)arg0)[0].data);
+  int64_t* arg0_shape = (int64_t*)(((DLTensor*)arg0)[0].shape);
+  int64_t* arg0_strides = (int64_t*)(((DLTensor*)arg0)[0].strides);
+  int32_t dev_type = (((DLTensor*)arg0)[0].ctx.device_type);
+  int32_t dev_id = (((DLTensor*)arg0)[0].ctx.device_id);
+  int16_t* placeholder1 = (int16_t*)(((DLTensor*)arg1)[0].data);
+  int64_t* arg1_shape = (int64_t*)(((DLTensor*)arg1)[0].shape);
+  int64_t* arg1_strides = (int64_t*)(((DLTensor*)arg1)[0].strides);
+  int8_t* T_cast = (int8_t*)(((DLTensor*)arg2)[0].data);
+  int64_t* arg2_shape = (int64_t*)(((DLTensor*)arg2)[0].shape);
+  int64_t* arg2_strides = (int64_t*)(((DLTensor*)arg2)[0].strides);
   if (!(arg0_strides == NULL)) {
   }
   if (!(arg1_strides == NULL)) {
@@ -228,20 +228,20 @@ TVM_DLL int32_t fused_nn_conv2d_add_right_shift_cast( void* args,  void* arg_typ
   int32_t arg2_code = (( int32_t*)arg_type_ids)[2];
   void* arg3 = (((TVMValue*)args)[3].v_handle);
   int32_t arg3_code = (( int32_t*)arg_type_ids)[3];
-  int8_t* placeholder = (int8_t*)(((TVMArray*)arg0)[0].data);
-  int64_t* arg0_shape = (int64_t*)(((TVMArray*)arg0)[0].shape);
-  int64_t* arg0_strides = (int64_t*)(((TVMArray*)arg0)[0].strides);
-  int32_t dev_type = (((TVMArray*)arg0)[0].ctx.device_type);
-  int32_t dev_id = (((TVMArray*)arg0)[0].ctx.device_id);
-  int8_t* placeholder1 = (int8_t*)(((TVMArray*)arg1)[0].data);
-  int64_t* arg1_shape = (int64_t*)(((TVMArray*)arg1)[0].shape);
-  int64_t* arg1_strides = (int64_t*)(((TVMArray*)arg1)[0].strides);
-  int32_t* placeholder2 = (int32_t*)(((TVMArray*)arg2)[0].data);
-  int64_t* arg2_shape = (int64_t*)(((TVMArray*)arg2)[0].shape);
-  int64_t* arg2_strides = (int64_t*)(((TVMArray*)arg2)[0].strides);
-  int8_t* T_cast = (int8_t*)(((TVMArray*)arg3)[0].data);
-  int64_t* arg3_shape = (int64_t*)(((TVMArray*)arg3)[0].shape);
-  int64_t* arg3_strides = (int64_t*)(((TVMArray*)arg3)[0].strides);
+  int8_t* placeholder = (int8_t*)(((DLTensor*)arg0)[0].data);
+  int64_t* arg0_shape = (int64_t*)(((DLTensor*)arg0)[0].shape);
+  int64_t* arg0_strides = (int64_t*)(((DLTensor*)arg0)[0].strides);
+  int32_t dev_type = (((DLTensor*)arg0)[0].ctx.device_type);
+  int32_t dev_id = (((DLTensor*)arg0)[0].ctx.device_id);
+  int8_t* placeholder1 = (int8_t*)(((DLTensor*)arg1)[0].data);
+  int64_t* arg1_shape = (int64_t*)(((DLTensor*)arg1)[0].shape);
+  int64_t* arg1_strides = (int64_t*)(((DLTensor*)arg1)[0].strides);
+  int32_t* placeholder2 = (int32_t*)(((DLTensor*)arg2)[0].data);
+  int64_t* arg2_shape = (int64_t*)(((DLTensor*)arg2)[0].shape);
+  int64_t* arg2_strides = (int64_t*)(((DLTensor*)arg2)[0].strides);
+  int8_t* T_cast = (int8_t*)(((DLTensor*)arg3)[0].data);
+  int64_t* arg3_shape = (int64_t*)(((DLTensor*)arg3)[0].shape);
+  int64_t* arg3_strides = (int64_t*)(((DLTensor*)arg3)[0].strides);
   if (!(arg0_strides == NULL)) {
   }
   if (!(arg1_strides == NULL)) {
@@ -523,14 +523,14 @@ TVM_DLL int32_t fused_nn_max_pool2d_nn_relu( void* args,  void* arg_type_ids, in
   int32_t arg0_code = (( int32_t*)arg_type_ids)[0];
   void* arg1 = (((TVMValue*)args)[1].v_handle);
   int32_t arg1_code = (( int32_t*)arg_type_ids)[1];
-  int8_t* placeholder = (int8_t*)(((TVMArray*)arg0)[0].data);
-  int64_t* arg0_shape = (int64_t*)(((TVMArray*)arg0)[0].shape);
-  int64_t* arg0_strides = (int64_t*)(((TVMArray*)arg0)[0].strides);
-  int32_t dev_type = (((TVMArray*)arg0)[0].ctx.device_type);
-  int32_t dev_id = (((TVMArray*)arg0)[0].ctx.device_id);
-  int8_t* T_relu = (int8_t*)(((TVMArray*)arg1)[0].data);
-  int64_t* arg1_shape = (int64_t*)(((TVMArray*)arg1)[0].shape);
-  int64_t* arg1_strides = (int64_t*)(((TVMArray*)arg1)[0].strides);
+  int8_t* placeholder = (int8_t*)(((DLTensor*)arg0)[0].data);
+  int64_t* arg0_shape = (int64_t*)(((DLTensor*)arg0)[0].shape);
+  int64_t* arg0_strides = (int64_t*)(((DLTensor*)arg0)[0].strides);
+  int32_t dev_type = (((DLTensor*)arg0)[0].ctx.device_type);
+  int32_t dev_id = (((DLTensor*)arg0)[0].ctx.device_id);
+  int8_t* T_relu = (int8_t*)(((DLTensor*)arg1)[0].data);
+  int64_t* arg1_shape = (int64_t*)(((DLTensor*)arg1)[0].shape);
+  int64_t* arg1_strides = (int64_t*)(((DLTensor*)arg1)[0].strides);
   if (!(arg0_strides == NULL)) {
   }
   if (!(arg1_strides == NULL)) {
@@ -590,14 +590,14 @@ TVM_DLL int32_t fused_nn_avg_pool2d( void* args,  void* arg_type_ids, int32_t nu
   int32_t arg0_code = (( int32_t*)arg_type_ids)[0];
   void* arg1 = (((TVMValue*)args)[1].v_handle);
   int32_t arg1_code = (( int32_t*)arg_type_ids)[1];
-  int8_t* placeholder = (int8_t*)(((TVMArray*)arg0)[0].data);
-  int64_t* arg0_shape = (int64_t*)(((TVMArray*)arg0)[0].shape);
-  int64_t* arg0_strides = (int64_t*)(((TVMArray*)arg0)[0].strides);
-  int32_t dev_type = (((TVMArray*)arg0)[0].ctx.device_type);
-  int32_t dev_id = (((TVMArray*)arg0)[0].ctx.device_id);
-  int32_t* tensor = (int32_t*)(((TVMArray*)arg1)[0].data);
-  int64_t* arg1_shape = (int64_t*)(((TVMArray*)arg1)[0].shape);
-  int64_t* arg1_strides = (int64_t*)(((TVMArray*)arg1)[0].strides);
+  int8_t* placeholder = (int8_t*)(((DLTensor*)arg0)[0].data);
+  int64_t* arg0_shape = (int64_t*)(((DLTensor*)arg0)[0].shape);
+  int64_t* arg0_strides = (int64_t*)(((DLTensor*)arg0)[0].strides);
+  int32_t dev_type = (((DLTensor*)arg0)[0].ctx.device_type);
+  int32_t dev_id = (((DLTensor*)arg0)[0].ctx.device_id);
+  int32_t* tensor = (int32_t*)(((DLTensor*)arg1)[0].data);
+  int64_t* arg1_shape = (int64_t*)(((DLTensor*)arg1)[0].shape);
+  int64_t* arg1_strides = (int64_t*)(((DLTensor*)arg1)[0].strides);
   if (!(arg0_strides == NULL)) {
   }
   if (!(arg1_strides == NULL)) {
@@ -653,14 +653,14 @@ TVM_DLL int32_t fused_nn_batch_flatten( void* args,  void* arg_type_ids, int32_t
   int32_t arg0_code = (( int32_t*)arg_type_ids)[0];
   void* arg1 = (((TVMValue*)args)[1].v_handle);
   int32_t arg1_code = (( int32_t*)arg_type_ids)[1];
-  int8_t* placeholder = (int8_t*)(((TVMArray*)arg0)[0].data);
-  int64_t* arg0_shape = (int64_t*)(((TVMArray*)arg0)[0].shape);
-  int64_t* arg0_strides = (int64_t*)(((TVMArray*)arg0)[0].strides);
-  int32_t dev_type = (((TVMArray*)arg0)[0].ctx.device_type);
-  int32_t dev_id = (((TVMArray*)arg0)[0].ctx.device_id);
-  int8_t* tensor = (int8_t*)(((TVMArray*)arg1)[0].data);
-  int64_t* arg1_shape = (int64_t*)(((TVMArray*)arg1)[0].shape);
-  int64_t* arg1_strides = (int64_t*)(((TVMArray*)arg1)[0].strides);
+  int8_t* placeholder = (int8_t*)(((DLTensor*)arg0)[0].data);
+  int64_t* arg0_shape = (int64_t*)(((DLTensor*)arg0)[0].shape);
+  int64_t* arg0_strides = (int64_t*)(((DLTensor*)arg0)[0].strides);
+  int32_t dev_type = (((DLTensor*)arg0)[0].ctx.device_type);
+  int32_t dev_id = (((DLTensor*)arg0)[0].ctx.device_id);
+  int8_t* tensor = (int8_t*)(((DLTensor*)arg1)[0].data);
+  int64_t* arg1_shape = (int64_t*)(((DLTensor*)arg1)[0].shape);
+  int64_t* arg1_strides = (int64_t*)(((DLTensor*)arg1)[0].strides);
   if (!(arg0_strides == NULL)) {
   }
   if (!(arg1_strides == NULL)) {
@@ -685,20 +685,20 @@ TVM_DLL int32_t fused_nn_conv2d_add_right_shift_cast_nn_relu( void* args,  void*
   int32_t arg2_code = (( int32_t*)arg_type_ids)[2];
   void* arg3 = (((TVMValue*)args)[3].v_handle);
   int32_t arg3_code = (( int32_t*)arg_type_ids)[3];
-  int8_t* placeholder = (int8_t*)(((TVMArray*)arg0)[0].data);
-  int64_t* arg0_shape = (int64_t*)(((TVMArray*)arg0)[0].shape);
-  int64_t* arg0_strides = (int64_t*)(((TVMArray*)arg0)[0].strides);
-  int32_t dev_type = (((TVMArray*)arg0)[0].ctx.device_type);
-  int32_t dev_id = (((TVMArray*)arg0)[0].ctx.device_id);
-  int8_t* placeholder1 = (int8_t*)(((TVMArray*)arg1)[0].data);
-  int64_t* arg1_shape = (int64_t*)(((TVMArray*)arg1)[0].shape);
-  int64_t* arg1_strides = (int64_t*)(((TVMArray*)arg1)[0].strides);
-  int32_t* placeholder2 = (int32_t*)(((TVMArray*)arg2)[0].data);
-  int64_t* arg2_shape = (int64_t*)(((TVMArray*)arg2)[0].shape);
-  int64_t* arg2_strides = (int64_t*)(((TVMArray*)arg2)[0].strides);
-  int8_t* T_relu = (int8_t*)(((TVMArray*)arg3)[0].data);
-  int64_t* arg3_shape = (int64_t*)(((TVMArray*)arg3)[0].shape);
-  int64_t* arg3_strides = (int64_t*)(((TVMArray*)arg3)[0].strides);
+  int8_t* placeholder = (int8_t*)(((DLTensor*)arg0)[0].data);
+  int64_t* arg0_shape = (int64_t*)(((DLTensor*)arg0)[0].shape);
+  int64_t* arg0_strides = (int64_t*)(((DLTensor*)arg0)[0].strides);
+  int32_t dev_type = (((DLTensor*)arg0)[0].ctx.device_type);
+  int32_t dev_id = (((DLTensor*)arg0)[0].ctx.device_id);
+  int8_t* placeholder1 = (int8_t*)(((DLTensor*)arg1)[0].data);
+  int64_t* arg1_shape = (int64_t*)(((DLTensor*)arg1)[0].shape);
+  int64_t* arg1_strides = (int64_t*)(((DLTensor*)arg1)[0].strides);
+  int32_t* placeholder2 = (int32_t*)(((DLTensor*)arg2)[0].data);
+  int64_t* arg2_shape = (int64_t*)(((DLTensor*)arg2)[0].shape);
+  int64_t* arg2_strides = (int64_t*)(((DLTensor*)arg2)[0].strides);
+  int8_t* T_relu = (int8_t*)(((DLTensor*)arg3)[0].data);
+  int64_t* arg3_shape = (int64_t*)(((DLTensor*)arg3)[0].shape);
+  int64_t* arg3_strides = (int64_t*)(((DLTensor*)arg3)[0].strides);
   if (!(arg0_strides == NULL)) {
   }
   if (!(arg1_strides == NULL)) {
@@ -763,14 +763,14 @@ TVM_DLL int32_t fused_nn_avg_pool2d_1( void* args,  void* arg_type_ids, int32_t 
   int32_t arg0_code = (( int32_t*)arg_type_ids)[0];
   void* arg1 = (((TVMValue*)args)[1].v_handle);
   int32_t arg1_code = (( int32_t*)arg_type_ids)[1];
-  int8_t* placeholder = (int8_t*)(((TVMArray*)arg0)[0].data);
-  int64_t* arg0_shape = (int64_t*)(((TVMArray*)arg0)[0].shape);
-  int64_t* arg0_strides = (int64_t*)(((TVMArray*)arg0)[0].strides);
-  int32_t dev_type = (((TVMArray*)arg0)[0].ctx.device_type);
-  int32_t dev_id = (((TVMArray*)arg0)[0].ctx.device_id);
-  int32_t* tensor = (int32_t*)(((TVMArray*)arg1)[0].data);
-  int64_t* arg1_shape = (int64_t*)(((TVMArray*)arg1)[0].shape);
-  int64_t* arg1_strides = (int64_t*)(((TVMArray*)arg1)[0].strides);
+  int8_t* placeholder = (int8_t*)(((DLTensor*)arg0)[0].data);
+  int64_t* arg0_shape = (int64_t*)(((DLTensor*)arg0)[0].shape);
+  int64_t* arg0_strides = (int64_t*)(((DLTensor*)arg0)[0].strides);
+  int32_t dev_type = (((DLTensor*)arg0)[0].ctx.device_type);
+  int32_t dev_id = (((DLTensor*)arg0)[0].ctx.device_id);
+  int32_t* tensor = (int32_t*)(((DLTensor*)arg1)[0].data);
+  int64_t* arg1_shape = (int64_t*)(((DLTensor*)arg1)[0].shape);
+  int64_t* arg1_strides = (int64_t*)(((DLTensor*)arg1)[0].strides);
   if (!(arg0_strides == NULL)) {
   }
   if (!(arg1_strides == NULL)) {
@@ -830,20 +830,20 @@ TVM_DLL int32_t fused_nn_dense_add_right_shift_cast( void* args,  void* arg_type
   int32_t arg2_code = (( int32_t*)arg_type_ids)[2];
   void* arg3 = (((TVMValue*)args)[3].v_handle);
   int32_t arg3_code = (( int32_t*)arg_type_ids)[3];
-  int8_t* placeholder = (int8_t*)(((TVMArray*)arg0)[0].data);
-  int64_t* arg0_shape = (int64_t*)(((TVMArray*)arg0)[0].shape);
-  int64_t* arg0_strides = (int64_t*)(((TVMArray*)arg0)[0].strides);
-  int32_t dev_type = (((TVMArray*)arg0)[0].ctx.device_type);
-  int32_t dev_id = (((TVMArray*)arg0)[0].ctx.device_id);
-  int8_t* placeholder1 = (int8_t*)(((TVMArray*)arg1)[0].data);
-  int64_t* arg1_shape = (int64_t*)(((TVMArray*)arg1)[0].shape);
-  int64_t* arg1_strides = (int64_t*)(((TVMArray*)arg1)[0].strides);
-  int32_t* placeholder2 = (int32_t*)(((TVMArray*)arg2)[0].data);
-  int64_t* arg2_shape = (int64_t*)(((TVMArray*)arg2)[0].shape);
-  int64_t* arg2_strides = (int64_t*)(((TVMArray*)arg2)[0].strides);
-  int8_t* T_cast = (int8_t*)(((TVMArray*)arg3)[0].data);
-  int64_t* arg3_shape = (int64_t*)(((TVMArray*)arg3)[0].shape);
-  int64_t* arg3_strides = (int64_t*)(((TVMArray*)arg3)[0].strides);
+  int8_t* placeholder = (int8_t*)(((DLTensor*)arg0)[0].data);
+  int64_t* arg0_shape = (int64_t*)(((DLTensor*)arg0)[0].shape);
+  int64_t* arg0_strides = (int64_t*)(((DLTensor*)arg0)[0].strides);
+  int32_t dev_type = (((DLTensor*)arg0)[0].ctx.device_type);
+  int32_t dev_id = (((DLTensor*)arg0)[0].ctx.device_id);
+  int8_t* placeholder1 = (int8_t*)(((DLTensor*)arg1)[0].data);
+  int64_t* arg1_shape = (int64_t*)(((DLTensor*)arg1)[0].shape);
+  int64_t* arg1_strides = (int64_t*)(((DLTensor*)arg1)[0].strides);
+  int32_t* placeholder2 = (int32_t*)(((DLTensor*)arg2)[0].data);
+  int64_t* arg2_shape = (int64_t*)(((DLTensor*)arg2)[0].shape);
+  int64_t* arg2_strides = (int64_t*)(((DLTensor*)arg2)[0].strides);
+  int8_t* T_cast = (int8_t*)(((DLTensor*)arg3)[0].data);
+  int64_t* arg3_shape = (int64_t*)(((DLTensor*)arg3)[0].shape);
+  int64_t* arg3_strides = (int64_t*)(((DLTensor*)arg3)[0].strides);
   if (!(arg0_strides == NULL)) {
   }
   if (!(arg1_strides == NULL)) {
@@ -883,20 +883,20 @@ TVM_DLL int32_t fused_nn_conv2d_add_right_shift_cast_nn_relu_1( void* args,  voi
   int32_t arg2_code = (( int32_t*)arg_type_ids)[2];
   void* arg3 = (((TVMValue*)args)[3].v_handle);
   int32_t arg3_code = (( int32_t*)arg_type_ids)[3];
-  int8_t* placeholder = (int8_t*)(((TVMArray*)arg0)[0].data);
-  int64_t* arg0_shape = (int64_t*)(((TVMArray*)arg0)[0].shape);
-  int64_t* arg0_strides = (int64_t*)(((TVMArray*)arg0)[0].strides);
-  int32_t dev_type = (((TVMArray*)arg0)[0].ctx.device_type);
-  int32_t dev_id = (((TVMArray*)arg0)[0].ctx.device_id);
-  int8_t* placeholder1 = (int8_t*)(((TVMArray*)arg1)[0].data);
-  int64_t* arg1_shape = (int64_t*)(((TVMArray*)arg1)[0].shape);
-  int64_t* arg1_strides = (int64_t*)(((TVMArray*)arg1)[0].strides);
-  int32_t* placeholder2 = (int32_t*)(((TVMArray*)arg2)[0].data);
-  int64_t* arg2_shape = (int64_t*)(((TVMArray*)arg2)[0].shape);
-  int64_t* arg2_strides = (int64_t*)(((TVMArray*)arg2)[0].strides);
-  int8_t* T_relu = (int8_t*)(((TVMArray*)arg3)[0].data);
-  int64_t* arg3_shape = (int64_t*)(((TVMArray*)arg3)[0].shape);
-  int64_t* arg3_strides = (int64_t*)(((TVMArray*)arg3)[0].strides);
+  int8_t* placeholder = (int8_t*)(((DLTensor*)arg0)[0].data);
+  int64_t* arg0_shape = (int64_t*)(((DLTensor*)arg0)[0].shape);
+  int64_t* arg0_strides = (int64_t*)(((DLTensor*)arg0)[0].strides);
+  int32_t dev_type = (((DLTensor*)arg0)[0].ctx.device_type);
+  int32_t dev_id = (((DLTensor*)arg0)[0].ctx.device_id);
+  int8_t* placeholder1 = (int8_t*)(((DLTensor*)arg1)[0].data);
+  int64_t* arg1_shape = (int64_t*)(((DLTensor*)arg1)[0].shape);
+  int64_t* arg1_strides = (int64_t*)(((DLTensor*)arg1)[0].strides);
+  int32_t* placeholder2 = (int32_t*)(((DLTensor*)arg2)[0].data);
+  int64_t* arg2_shape = (int64_t*)(((DLTensor*)arg2)[0].shape);
+  int64_t* arg2_strides = (int64_t*)(((DLTensor*)arg2)[0].strides);
+  int8_t* T_relu = (int8_t*)(((DLTensor*)arg3)[0].data);
+  int64_t* arg3_shape = (int64_t*)(((DLTensor*)arg3)[0].shape);
+  int64_t* arg3_strides = (int64_t*)(((DLTensor*)arg3)[0].strides);
   if (!(arg0_strides == NULL)) {
   }
   if (!(arg1_strides == NULL)) {

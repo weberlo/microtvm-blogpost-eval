@@ -26,7 +26,10 @@ from topi.testing import conv2d_nchw_python
 
 if 'CMSIS_NN_PATH' not in os.environ:
     raise RuntimeError('must have "CMSIS_NN_PATH" in environment')
+if 'CMSIS_ST_PATH' not in os.environ:
+    raise RuntimeError('must have "CMSIS_ST_PATH" in environment')
 CMSIS_NN_PATH = os.environ['CMSIS_NN_PATH']
+CMSIS_ST_PATH = os.environ['CMSIS_ST_PATH']
 CMSIS_HEADERS = [
     'cmsis_gcc.h',
     'arm_math.h',
@@ -35,7 +38,8 @@ CMSIS_HEADERS = [
 CMSIS_INCLUDE_PATHS = [
     f'{CMSIS_NN_PATH}/CMSIS/Core/Include',
     f'{CMSIS_NN_PATH}/CMSIS/DSP/Include',
-    f'{CMSIS_NN_PATH}/CMSIS/NN/Include'
+    f'{CMSIS_NN_PATH}/CMSIS/NN/Include',
+    f'{CMSIS_ST_PATH}',
 ]
 
 def get_logger(log_file_name):

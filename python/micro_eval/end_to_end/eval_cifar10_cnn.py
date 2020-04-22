@@ -206,6 +206,89 @@ KERNEL_LAYOUTS = {
 #    'conv2d_direct_simd': 'N
 }
 
+def eval_prebuilt_micro(samples, time_overhead):
+    CMSIS_SEC_CONTRAINTS = {
+        'text': (20000, MemConstraint.ABSOLUTE_BYTES),
+        'rodata': (4096, MemConstraint.ABSOLUTE_BYTES),
+        'data': (100000, MemConstraint.ABSOLUTE_BYTES),
+        'bss': (644, MemConstraint.ABSOLUTE_BYTES),
+        'args': (4096, MemConstraint.ABSOLUTE_BYTES),
+        'heap': (100.0, MemConstraint.WEIGHT),
+        'workspace': (52000, MemConstraint.ABSOLUTE_BYTES),
+        # NOTE we need a deeper stack: since they make deep func calls
+        'stack': (288, MemConstraint.ABSOLUTE_BYTES),
+    }
+    DEV_CONFIG = generate_config(CMSIS_SEC_CONTRAINTS)
+    reset_gdbinit(DEV_CONFIG)
+
+    DATA_LAYOUT = 'NHWC'
+    DATA_SHAPE = (1, 32, 32, 3)
+    OUTPUT_SHAPE = (10,)
+
+    IN_DTYPE = 'uint8'
+    OUT_DTYPE = 'int8'
+
+    # Begin a session
+    LOGGER.debug('[Initting]')
+    mod, params = gen_cifar10_cnn(
+        data_layout, kernel_layouts,
+        op_strategy=op_strategy,
+        use_random_params=USE_RANDOM_PARAMS)
+    # TODO probably need a different dev conf for cmsis
+    with micro.Session(DEV_CONFIG) as sess:
+        # Build the function
+        LOGGER.debug('[Building]')
+
+        def build_graph_mod():
+            return relay_micro_build(
+                mod['main'],
+                DEV_CONFIG, TARGET,
+                params=params,
+                lib_headers=MICRO_HEADERS,
+                lib_include_paths=MICRO_INCLUDE_PATHS)
+
+        with TARGET:
+            if USE_TUNED_SCHEDULES:
+                with autotvm.apply_history_best(E2E_LOG_FILE_NAME):
+                    graph_mod = build_graph_mod()
+        micro_mod = create_micro_mod(
+            MockCMod("cifar10_cnn.c"),
+            DEV_CONFIG,
+            lib_src_paths=[],
+            lib_headers=MICRO_HEADERS,
+            lib_include_paths=CMSIS_INCLUDE_PATHS)
+
+        with open(f'{__file__}/../../../debug/micro/_tvmdbg_ctx_MICRO_DEV_0/_tvmdbg_graph_dump.json') as json_f:
+            graph = json.load(json_f)
+        mod = graph_runtime.create(graph, micro_mod, ctx)
+#])  #CMSIS_INCLUDE_PATHS + [CIFAR10_INCLUDE_PATH])
+        micro_func = micro_mod['arm_cifar10_cnn_wrapper']
+        ctx = tvm.micro_dev(0)
+
+        output_tvm = tvm.nd.array(np.zeros(OUTPUT_SHAPE, dtype=OUT_DTYPE), ctx)
+
+        for i, sample in enumerate(samples):
+            LOGGER.info(f'[Sample {i}]')
+            data_nt = sample['data']
+            label = sample['label']
+
+            data_np = data_nt.with_layout(DATA_LAYOUT).data
+            assert data_np.shape == DATA_SHAPE
+            assert data_np.dtype == IN_DTYPE
+            data_tvm = tvm.nd.array(data_np, ctx=ctx)
+
+            exec_time = benchmark_micro_func(
+                sess, micro_func, [data_tvm, output_tvm], 1, time_overhead)
+            LOGGER.info(f'  model execution took {exec_time} milliseconds')
+
+            cmsis_output_np = output_tvm.asnumpy()
+            LOGGER.info(f'  output: {cmsis_output_np}')
+            prediction = CIFAR10_CLASSES[np.argmax(cmsis_output_np)]
+            label = CIFAR10_CLASSES[label]
+            LOGGER.info(f'  prediction was {prediction}')
+            LOGGER.info(f'  actual was {label}')
+
+
 def eval_micro(samples, time_overhead):
     # USE_TUNED_SCHEDULES = True
     USE_TUNED_SCHEDULES = True
@@ -347,6 +430,7 @@ def main():
 
     samples = get_sample_points(NUM_SAMPLES)
 #    eval_cmsis(samples, time_overhead)
+#    eval_prebuilt_micro(samples, time_overhead)
     eval_micro(samples, time_overhead)
 
     #with relay.build_config(opt_level=3, disabled_pass={"AlterOpLayout"}):
