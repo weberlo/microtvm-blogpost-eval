@@ -285,7 +285,7 @@ def update_rpc_server_config(config_base, num_servers, task_index, task):
             config['mem_layout'] = micro.device.arm.stm32f746xx.gen_mem_layout(
                 micro.device.arm.stm32f746xx.BASE_ADDR,
                 micro.device.arm.stm32f746xx.AVAILABLE_MEM,
-                micro.device.arm.stm32f746xx.WORD_SIZE,
+                micro.device.arm.stm32f746xx.WORD_SIZE_BITS,
                 OrderedDict([
                     ('text', (28000, MemConstraint.ABSOLUTE_BYTES)),
                     ('rodata', (100, MemConstraint.ABSOLUTE_BYTES)),
@@ -300,7 +300,7 @@ def update_rpc_server_config(config_base, num_servers, task_index, task):
             config['mem_layout'] = micro.device.arm.stm32f746xx.gen_mem_layout(
                 micro.device.arm.stm32f746xx.BASE_ADDR,
                 micro.device.arm.stm32f746xx.AVAILABLE_MEM,
-                micro.device.arm.stm32f746xx.WORD_SIZE,
+                micro.device.arm.stm32f746xx.WORD_SIZE_BITS,
                 OrderedDict([
                     ('text', (23000, MemConstraint.ABSOLUTE_BYTES)),
                     ('rodata', (100, MemConstraint.ABSOLUTE_BYTES)),
@@ -319,7 +319,7 @@ def update_rpc_server_config(config_base, num_servers, task_index, task):
             json.dump(config, f, indent=4)
 
 
-DEBUG_RPC_SERVER_OUTPUT = False
+DEBUG_RPC_SERVER_OUTPUT = True
 
 
 def launch_rpc_servers(config_base, num_servers):
@@ -373,62 +373,9 @@ def stop_rpc_servers(procs):
 
 
 def write_rpc_server_config(template_key, config_base, num_ports):
-    # each op strategy needs a slightly different memory layout, so we update
-    # the dev config the RPC servers use (only works if the script that restarts the RPC
-    # server upon file modification is used)
-    if template_key == 'direct':
-        DEV_CONFIG['mem_layout'] = micro.device.arm.stm32f746xx.gen_mem_layout(
-            micro.device.arm.stm32f746xx.BASE_ADDR,
-            micro.device.arm.stm32f746xx.AVAILABLE_MEM,
-            micro.device.arm.stm32f746xx.WORD_SIZE,
-            OrderedDict([
-                ('text', (28000, MemConstraint.ABSOLUTE_BYTES)),
-                ('rodata', (100, MemConstraint.ABSOLUTE_BYTES)),
-                ('data', (100, MemConstraint.ABSOLUTE_BYTES)),
-                ('bss', (600, MemConstraint.ABSOLUTE_BYTES)),
-                ('args', (4096, MemConstraint.ABSOLUTE_BYTES)),
-                ('heap', (100.0, MemConstraint.WEIGHT)),
-                ('workspace', (132000, MemConstraint.ABSOLUTE_BYTES)),
-                ('stack', (128, MemConstraint.ABSOLUTE_BYTES)),
-            ]))
-    elif template_key == 'direct_simd':
-        DEV_CONFIG['mem_layout'] = micro.device.arm.stm32f746xx.gen_mem_layout(
-            micro.device.arm.stm32f746xx.BASE_ADDR,
-            micro.device.arm.stm32f746xx.AVAILABLE_MEM,
-            micro.device.arm.stm32f746xx.WORD_SIZE,
-            OrderedDict([
-                ('text', (23000, MemConstraint.ABSOLUTE_BYTES)),
-                ('rodata', (100, MemConstraint.ABSOLUTE_BYTES)),
-                ('data', (100, MemConstraint.ABSOLUTE_BYTES)),
-                ('bss', (600, MemConstraint.ABSOLUTE_BYTES)),
-                ('args', (4096, MemConstraint.ABSOLUTE_BYTES)),
-                ('heap', (100.0, MemConstraint.WEIGHT)),
-                ('workspace', (10000, MemConstraint.ABSOLUTE_BYTES)),
-                ('stack', (128, MemConstraint.ABSOLUTE_BYTES)),
-            ]))
-    elif template_key == 'partial_im2col':
-        DEV_CONFIG['mem_layout'] = micro.device.arm.stm32f746xx.gen_mem_layout(
-            micro.device.arm.stm32f746xx.BASE_ADDR,
-            micro.device.arm.stm32f746xx.AVAILABLE_MEM,
-            micro.device.arm.stm32f746xx.WORD_SIZE,
-            OrderedDict([
-                ('text', (18000, MemConstraint.ABSOLUTE_BYTES)),
-                ('rodata', (100, MemConstraint.ABSOLUTE_BYTES)),
-                ('data', (100, MemConstraint.ABSOLUTE_BYTES)),
-                ('bss', (600, MemConstraint.ABSOLUTE_BYTES)),
-                ('args', (4096, MemConstraint.ABSOLUTE_BYTES)),
-                ('heap', (100.0, MemConstraint.WEIGHT)),
-                ('workspace', (132000, MemConstraint.ABSOLUTE_BYTES)),
-                # ('workspace', (64000, MemConstraint.ABSOLUTE_BYTES)),
-                ('stack', (128, MemConstraint.ABSOLUTE_BYTES)),
-            ]))
-    else:
-        assert False
-
     for i in range(num_ports):
-        DEV_CONFIG['server_port'] = 6666 + i
-        with open(f'{dev_config_base}/{i}/utvm_dev_config.json', 'w') as f:
-            json.dump(DEV_CONFIG, f, indent=4)
+        with open(f'{config_base}/{i}/utvm_dev_config.json', 'w') as f:
+            json.dump(stm32f746xx.generate_config('127.0.0.1', 6666 + i), f, indent=4)
 
 
 def get_tasks(template_key):
@@ -518,7 +465,7 @@ def _build_template_keys(args):
 
 def _cmd_rpc_dev_config(args):
     for key in _build_template_keys(args):
-        write_rpc_server_config(key, args.config_base, args.num_ports)
+        write_rpc_server_config(key, args.config_base, args.num_rpc_servers)
 
 
 def _cmd_tune(args):
