@@ -2,7 +2,8 @@ from collections import Iterable, OrderedDict
 import json
 import logging
 import os
-from typing import *
+import subprocess
+import typing
 
 import numpy as np
 
@@ -42,11 +43,21 @@ CMSIS_INCLUDE_PATHS = [
     f'{CMSIS_ST_PATH}',
 ]
 
+REPO_ROOT = None
+def get_repo_root():
+    global REPO_ROOT
+    if REPO_ROOT is None:
+        REPO_ROOT = str(subprocess.check_output(['git', 'rev-parse', '--show-toplevel'],
+                                                cwd=os.path.dirname(__file__)), 'utf-8').strip('\n')
+    return REPO_ROOT
+
+
 def get_logger(log_file_name):
     logger = logging.getLogger('micro_eval')
     logger.setLevel(logging.DEBUG)
     fh = logging.FileHandler(log_file_name)
     fh.setLevel(logging.DEBUG)
+    fh.setFormatter(logging.Formatter(fmt='%(asctime)s %(levelname)s %(module)s:%(lineno)d %(message)s'))
     ch = logging.StreamHandler()
     ch.setLevel(logging.ERROR)
     logger.addHandler(fh)
@@ -74,7 +85,7 @@ class NamedTensor:
 
 
 class NamedType:
-    def __init__(self, dim_dict: Dict[str, int], dtype=None):
+    def __init__(self, dim_dict: typing.Dict[str, int], dtype=None):
         self.dim_dict = dim_dict
         if dtype is not None:
             self._dtype = dtype
@@ -105,7 +116,7 @@ class NamedType:
 
 
 class BakedType:
-    def __init__(self, dim_iter: Iterable[Tuple[str, int]], dtype=None):
+    def __init__(self, dim_iter: typing.Iterable[typing.Tuple[str, int]], dtype=None):
         # layout = []
         # shape = []
         # assert isinstance(dim_iter, Iterable)
@@ -179,6 +190,7 @@ def show_c_source(sched, arg_bufs):
 
 
 DEBUG_MODE = False
+
 
 def relay_micro_build(func, dev_config, target, params=None, lib_headers=None, lib_include_paths=None):
     """Create a graph runtime module with a micro device context from a Relay function.
@@ -316,14 +328,14 @@ define print_utvm_args
         eval "set $num_task_args = utvm_tasks[$i].num_args"
         print "num_args: %d", $num_task_args
         while $j < $num_task_args
-            eval "set $num_bits = ((TVMArray*) utvm_tasks[0].arg_values[0].v_handle)->dtype.bits"
+            eval "set $num_bits = ((DLTensor*) utvm_tasks[0].arg_values[0].v_handle)->dtype.bits"
             if $num_bits == 8
                 print "dtype: int8"
-                eval "p/d *((int8_t*) ((TVMArray*) utvm_tasks[$i].arg_values[$j].v_handle)->data)@16"
+                eval "p/d *((int8_t*) ((DLTensor*) utvm_tasks[$i].arg_values[$j].v_handle)->data)@16"
             end
             if $num_bits == 32
                 print "dtype: int32"
-                eval "p/d *((int32_t*) ((TVMArray*) utvm_tasks[$i].arg_values[$j].v_handle)->data)@16"
+                eval "p/d *((int32_t*) ((DLTensor*) utvm_tasks[$i].arg_values[$j].v_handle)->data)@16"
             end
             set $j = $j + 1
         end

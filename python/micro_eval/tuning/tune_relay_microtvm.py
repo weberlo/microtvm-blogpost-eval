@@ -68,6 +68,7 @@ from micro_eval.util import (
     get_comm_overhead, benchmark_micro_func,
     check_conv2d_output
 )
+from micro_eval.util import model_util
 from micro_eval.model.cifar10_cnn import gen_cifar10_cnn
 from micro_eval.micro_topi import collect_conv_tasks
 from micro_eval.micro_topi.cortex_m7.conv2d.direct import conv2d_direct
@@ -123,7 +124,7 @@ OBJ_BUILD_CONFIG = micro.device.arm.stm32f746xx.generate_config('127.0.0.1', 666
     'text': (50000, MemConstraint.ABSOLUTE_BYTES),
     'rodata': (100, MemConstraint.ABSOLUTE_BYTES),
     'data': (100, MemConstraint.ABSOLUTE_BYTES),
-    'bss': (600, MemConstraint.ABSOLUTE_BYTES),
+    'bss': (800, MemConstraint.ABSOLUTE_BYTES),
     'args': (4096, MemConstraint.ABSOLUTE_BYTES),
     'heap': (100.0, MemConstraint.WEIGHT),
     'workspace': (100000, MemConstraint.ABSOLUTE_BYTES),
@@ -132,15 +133,6 @@ OBJ_BUILD_CONFIG = micro.device.arm.stm32f746xx.generate_config('127.0.0.1', 666
 
 DEVICE_ID = 'arm.stm32f746xx'
 TARGET = tvm.target.create('c -device=micro_dev')
-
-# N_TRIAL = 1500
-# EARLY_STOPPING = 800
-# N_TRIAL = 250
-# EARLY_STOPPING = 250
-# N_TRIAL = 30
-# EARLY_STOPPING = 30
-# N_TRIAL = 1
-# EARLY_STOPPING = 1
 
 TRACKER_ADDR = '0.0.0.0'
 TRACKER_PORT = 9190
@@ -290,7 +282,7 @@ def update_rpc_server_config(config_base, num_servers, task_index, task):
                     ('text', (28000, MemConstraint.ABSOLUTE_BYTES)),
                     ('rodata', (100, MemConstraint.ABSOLUTE_BYTES)),
                     ('data', (100, MemConstraint.ABSOLUTE_BYTES)),
-                    ('bss', (600, MemConstraint.ABSOLUTE_BYTES)),
+                    ('bss', (800, MemConstraint.ABSOLUTE_BYTES)),
                     ('args', (4096, MemConstraint.ABSOLUTE_BYTES)),
                     ('heap', (100.0, MemConstraint.WEIGHT)),
                     ('workspace', (WORKSPACE_SIZE_BYTES_BY_TASK_INDEX[task_index], MemConstraint.ABSOLUTE_BYTES)),
@@ -305,7 +297,7 @@ def update_rpc_server_config(config_base, num_servers, task_index, task):
                     ('text', (23000, MemConstraint.ABSOLUTE_BYTES)),
                     ('rodata', (100, MemConstraint.ABSOLUTE_BYTES)),
                     ('data', (100, MemConstraint.ABSOLUTE_BYTES)),
-                    ('bss', (600, MemConstraint.ABSOLUTE_BYTES)),
+                    ('bss', (800, MemConstraint.ABSOLUTE_BYTES)),
                     ('args', (4096, MemConstraint.ABSOLUTE_BYTES)),
                     ('heap', (100.0, MemConstraint.WEIGHT)),
                     ('workspace', (WORKSPACE_SIZE_BYTES_BY_TASK_INDEX[task_index], MemConstraint.ABSOLUTE_BYTES)),
@@ -378,69 +370,23 @@ def write_rpc_server_config(template_key, config_base, num_ports):
             json.dump(stm32f746xx.generate_config('127.0.0.1', 6666 + i), f, indent=4)
 
 
-def get_tasks(template_key):
-    from tvm.autotvm.task.topi_integration import TaskExtractEnv
-    TaskExtractEnv()
-
-    # if template_key == 'direct':
-    #     @autotvm.task.register('topi_nn_conv2d', override=True)
-    #     def _conv2d_direct(*args, **kwargs):
-    #         return conv2d_direct(*args, **kwargs)
-    #     data_layout = conv2d_direct.default_data_layout
-    #     kernel_layout = conv2d_direct.default_kernel_layout
-    # elif template_key == 'direct_simd':
-    #     @autotvm.task.register('topi_nn_conv2d', override=True)
-    #     def _conv2d_direct_simd(*args, **kwargs):
-    #         return conv2d_direct_simd(*args, **kwargs)
-    #     data_layout = conv2d_direct_simd.default_data_layout
-    #     kernel_layout = conv2d_direct_simd.default_kernel_layout
-    # elif template_key == 'partial_im2col':
-    #     @autotvm.task.register('topi_nn_conv2d', override=True)
-    #     def _conv2d_partial_im2col(*args, **kwargs):
-    #         return conv2d_partial_im2col(*args, **kwargs)
-    #     data_layout = conv2d_partial_im2col.default_data_layout
-    #     kernel_layout = conv2d_partial_im2col.default_kernel_layout
-    # else:
-    #     assert False
-
-    #from mxnet.gluon.model_zoo.vision import get_model
-    #block = get_model('mobilenetv2_0.25', pretrained=True)
-    #mod, params = relay.frontend.from_mxnet(block, shape={'data': INPUT_SHAPE}, dtype=DTYPE)
-
-    #mod, params = gen_conv2d('NHWC', 'HWOI')
-
-    data_layout = 'NHWC'
-    kernel_layout = 'HWOI'
-    mod, params = gen_cifar10_cnn(
-        data_layout, kernel_layout, op_strategy=template_key, use_random_params=True)
-
+def get_tasks(args):
+#    data_layout = 'NHWC'
+#    kernel_layout = 'HWOI'
+    mod = model_util.build_relay_mod(args.cifar10_conv_op_impl, use_random_params=True)
 
     with tvm.target.build_config(opt_level=3, disable_vectorize=True):
-        tasks = autotvm.task.extract_from_program(mod['main'], params, TARGET)
+        tasks = autotvm.task.extract_from_program(mod.mod['main'], mod.params, TARGET)
 
-#    tasks = collect_conv_tasks(mod['main'], TARGET, template_key)
-
-    # dumb_tasks = autotvm.task.extract_from_program(
-    #     mod['main'], target=TARGET, params=params, ops=TUNE_OPS)
     print(f'extracted {len(tasks)} tasks: {tasks}')
     assert len(tasks) == 3
-
-    # for i in range(len(tasks)):
-    #     assert 'conv2d' in tasks[i].name
-    #     # overwrite template key (defaults to 'direct') with the desired key
-    #     tasks[i] = autotvm.task.create(
-    #             tasks[i].name,
-    #             tasks[i].args,
-    #             tasks[i].target,
-    #             tasks[i].target_host,
-    #             template_key=template_key)
 
     return tasks
 
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--use-simd', action='store_true', help='Use direct_simd ops')
+    model_util.define_cifar10_conv_op_impl(parser)
     subparsers = parser.add_subparsers(dest='action')
 
     tune_parser = subparsers.add_parser('tune')
@@ -459,26 +405,22 @@ def parse_args():
     return parser.parse_args()
 
 
-def _build_template_keys(args):
-    return ['direct_simd'] if args.use_simd else ['direct']
-
-
 def _cmd_rpc_dev_config(args):
-    for key in _build_template_keys(args):
+    for key in args.cifar10_conv_op_impl:
         write_rpc_server_config(key, args.config_base, args.num_rpc_servers)
 
 
 def _cmd_tune(args):
-    template_keys = _build_template_keys(args)
-    tasks = get_tasks(template_keys[0])
-    log_file_name = f'{DEVICE_ID}.{template_keys[0]}.e2e.log'
+    tasks = get_tasks(args)
+    log_file_name = f'{DEVICE_ID}.{args.cifar10_conv_op_impl[0]}.e2e.log'
     log_file = tune_model(args.rpc_server_config_base, args.num_rpc_servers, args.num_trials, tasks, log_file_name)
     analyze(tasks, log_file, promote=True)
 
+
 def _cmd_analyze(args):
-    template_keys = _build_template_keys(args)
-    tasks = get_tasks(template_keys[0])
+    tasks = get_tasks(args)
     analyze(tasks, args.log_file, promote=args.promote)
+
 
 def main():
     args = parse_args()
