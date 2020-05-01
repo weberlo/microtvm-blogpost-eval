@@ -10,7 +10,7 @@ for i in range(10):
 # Setup
 - Currently, must use Linux for host OS.
 - Must have TVM compiled and on your `PYTHONPATH`.
-- Add `micro_eval` to your `PYTHONPATH` environment variable.
+- Add the `python` directory to your `PYTHONPATH` environment variable.
 - Export a `MICRO_GDB_INIT_DIR` env var, so a `.gdbinit` file can be created to debug device execution.
 
 ## Arm STM32
