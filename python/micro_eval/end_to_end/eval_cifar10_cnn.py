@@ -52,19 +52,37 @@ LOGGER.info(f'[{datetime.datetime.now()}]')
 TARGET = tvm.target.create('c -device=micro_dev')
 DEVICE_ID = stm32f746xx.DEVICE_ID
 # DEVICE_ID = host.DEVICE_ID
-SERVER_ADDR = '127.0.0.1'
-SERVER_PORT = 6666
 
 if DEVICE_ID == stm32f746xx.DEVICE_ID:
+    SERVER_ADDR = '127.0.0.1'
+    SERVER_PORT = 6666
     def generate_config(section_constraints=None):
-        return stm32f746xx.generate_config(SERVER_ADDR, SERVER_PORT, section_constraints)
+        return stm32f746xx.generate_config(
+            SERVER_ADDR,
+            SERVER_PORT,
+            section_constraints=section_constraints)
     MICRO_HEADERS = CMSIS_HEADERS
     MICRO_INCLUDE_PATHS = CMSIS_INCLUDE_PATHS
+    # per-conv op strategies (first entry is the strategy of the first conv and so on).
+    # we want the ability to configure the op strategy, instead of just using
+    # the best strategy in the log, because certain strategy combos have a
+    # memory footprint that exceeds the available memory of the device.
+    OP_STRATEGIES = [
+        conv2d_direct,
+        conv2d_direct_simd,
+        conv2d_direct_simd,
+        ]
 elif DEVICE_ID == host.DEVICE_ID:
     def generate_config(section_constraints=None):
-        return host.generate_config(section_constraints)
+        return host.generate_config(section_constraints=section_constraints)
     MICRO_HEADERS = None
     MICRO_INCLUDE_PATHS = None
+    # we don't have SIMD schedules for the host
+    OP_STRATEGIES = [
+        conv2d_direct,
+        conv2d_direct,
+        conv2d_direct,
+        ]
 else:
     raise RuntimeErorr(f'unknown device ID "{DEVICE_ID}"')
 
@@ -114,6 +132,11 @@ CIFAR10_CLASSES = ['Plane', 'Car', 'Bird', 'Cat', 'Deer', 'Dog', 'Frog', 'Horse'
 NUM_SAMPLES = 10
 
 def eval_cmsis(samples, time_overhead):
+    if DEVICE_ID != stm32f746xx.DEVICE_ID:
+        print(f'CMSIS-NN cannot be run with the "{DEVICE_ID}" device. skipping...')
+        input('[press enter to continue]')
+        return
+
     CMSIS_SEC_CONTRAINTS = {
         'text': (16000, MemConstraint.ABSOLUTE_BYTES),
         'rodata': (4096, MemConstraint.ABSOLUTE_BYTES),
@@ -197,22 +220,32 @@ def gen_model_config(mod):
 
     assert len(convs) == 3
     result = {}
-    result[(TARGET, convs[0])] = FallbackConfigEntity()
-    result[(TARGET, convs[1])] = gen_direct_simd_cfg(8, 32, 8)
-    result[(TARGET, convs[2])] = gen_direct_simd_cfg(8, 32, 8)
+    for conv, strat in zip(convs, OP_STRATEGIES):
+        if strat == conv2d_direct_simd:
+            result[(TARGET, conv)] = gen_direct_simd_cfg(8, 32, 8)
+        else:  # direct non-SIMD or partial im2col
+            result[(TARGET, conv)] = FallbackConfigEntity()
     return result
 
 
 def eval_micro(samples, time_overhead):
-    # USE_TUNED_SCHEDULES = True
-    USE_TUNED_SCHEDULES = False
+    USE_TUNED_SCHEDULES = True
     USE_RANDOM_PARAMS = True
-
+    # MICRO_SEC_CONSTRAINTS = {
+    #     'text': (28000, MemConstraint.ABSOLUTE_BYTES),
+    #     'rodata': (104, MemConstraint.ABSOLUTE_BYTES),
+    #     'data': (104, MemConstraint.ABSOLUTE_BYTES),
+    #     'bss': (1024, MemConstraint.ABSOLUTE_BYTES),
+    #     'args': (4096, MemConstraint.ABSOLUTE_BYTES),
+    #     'heap': (100.0, MemConstraint.WEIGHT),
+    #     'workspace': (132000, MemConstraint.ABSOLUTE_BYTES),
+    #     'stack': (128, MemConstraint.ABSOLUTE_BYTES),
+    # }
     MICRO_SEC_CONSTRAINTS = {
-        'text': (28000, MemConstraint.ABSOLUTE_BYTES),
-        'rodata': (100, MemConstraint.ABSOLUTE_BYTES),
-        'data': (100, MemConstraint.ABSOLUTE_BYTES),
-        'bss': (600, MemConstraint.ABSOLUTE_BYTES),
+        'text': (140000, MemConstraint.ABSOLUTE_BYTES),
+        'rodata': (104, MemConstraint.ABSOLUTE_BYTES),
+        'data': (104, MemConstraint.ABSOLUTE_BYTES),
+        'bss': (1024, MemConstraint.ABSOLUTE_BYTES),
         'args': (4096, MemConstraint.ABSOLUTE_BYTES),
         'heap': (100.0, MemConstraint.WEIGHT),
         'workspace': (132000, MemConstraint.ABSOLUTE_BYTES),
@@ -221,45 +254,20 @@ def eval_micro(samples, time_overhead):
     DEV_CONFIG = generate_config(MICRO_SEC_CONSTRAINTS)
     reset_gdbinit(DEV_CONFIG)
 
-    # per-conv op strategies (first entry is the strategy of the first conv and so on).
-    # we want the ability to configure the op strategy, instead of just using
-    # the best strategy in the log, because certain strategy combos have a
-    # memory footprint that exceeds the available memory of the device.
-    OP_STRATEGIES = [
-        # conv2d_partial_im2col,
-        # conv2d_direct_simd,
-        # conv2d_direct_simd,
-        conv2d_direct,
-        conv2d_direct_simd,
-        conv2d_direct_simd,
-        ]
     data_layout = OP_STRATEGIES[0].default_data_layout
     kernel_layouts = []
     for strat in OP_STRATEGIES:
         assert strat.default_data_layout == data_layout, 'data layouts for all convs must agree'
         kernel_layouts.append(strat.default_kernel_layout)
 
-    # USE_SIMD = True
-    # if USE_SIMD:
-    #     # don't use SIMD layout in the first layer
-    #     KERNEL_LAYOUTS = ['HWIO', 'HWOI', 'HWOI']
-    # else:
-    #     DATA_LAYOUT = 'NHWC'
-    #     KERNEL_LAYOUTS = 'HWIO'
-
-    DEVICE_ID = 'arm.stm32f746xx'
-    E2E_LOG_FILE_NAME = f'{DEVICE_ID}.e2e.log'
-    # E2E_LOG_FILE_NAME = f'autotvm_logs/pre_simd/{DEVICE_ID}.e2e.log.manually_fixed'
-
-    # op_strategy = 'direct_simd'
-    op_strategy = 'direct'
-    # op_strategy = 'direct_simd' if USE_SIMD else 'direct'
     mod, params = gen_cifar10_cnn(
         data_layout, kernel_layouts,
-        op_strategy=op_strategy,
+        # 'direct_simd' breaks the memory budget
+        input_op_strategy='direct',
         use_random_params=USE_RANDOM_PARAMS)
     if not USE_TUNED_SCHEDULES:
         model_config = gen_model_config(mod)
+
     LOGGER.debug('[Initting]')
     with micro.Session(DEV_CONFIG) as sess:
         LOGGER.debug('[Building]')
@@ -273,7 +281,8 @@ def eval_micro(samples, time_overhead):
 
         with TARGET:
             if USE_TUNED_SCHEDULES:
-                with autotvm.apply_history_best(E2E_LOG_FILE_NAME):
+                e2e_log_file_name = f'{DEVICE_ID}.e2e.log'
+                with autotvm.apply_history_best(e2e_log_file_name):
                     graph_mod = build_graph_mod()
             else:
                 with ManualConfigContext(model_config):
@@ -343,7 +352,7 @@ def main():
     # time_overhead = 0.0
 
     samples = get_sample_points(NUM_SAMPLES)
-    eval_cmsis(samples, time_overhead)
+    # eval_cmsis(samples, time_overhead)
     eval_micro(samples, time_overhead)
 
     #with relay.build_config(opt_level=3, disabled_pass={"AlterOpLayout"}):

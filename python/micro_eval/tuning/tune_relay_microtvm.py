@@ -40,7 +40,8 @@ from tvm.autotvm.tuner import XGBTuner, GATuner, RandomTuner, GridSearchTuner
 
 import tvm.micro as micro
 from tvm.micro import create_micro_mod
-import tvm.micro.device.arm.stm32f746xx as stm32f746xx
+from tvm.micro.device import host
+from tvm.micro.device.arm import stm32f746xx
 from tvm.micro.device.arm.stm32f746xx import MemConstraint
 
 from tvm.relay import transform
@@ -103,9 +104,12 @@ from micro_eval.micro_topi.cortex_m7.conv2d.partial_im2col import conv2d_partial
 # in another terminal.
 #
 # Then, run
-#   `python -m tvm.exec.rpc_server --tracker=0.0.0.0:9190 --key=micro --utvm-dev-id='arm.stm32f746xx' --utvm-dev-config-args='["127.0.0.1", 6666]'`
+#   `python -m tvm.exec.rpc_server --tracker=0.0.0.0:9190 --key=arm.stm32f746xx --utvm-dev-id='arm.stm32f746xx' --utvm-dev-config-args='["127.0.0.1", 6666]'`
 # in another terminal.  If you have multiple boards, you will need to run this
 # command for each board, adjusting the port accordingly.
+#
+# To make sure your device(s) are connected to the tracker, run
+#   `python -m tvm.exec.query_rpc_tracker --port 9190`
 #
 
 ####################
@@ -114,19 +118,51 @@ from micro_eval.micro_topi.cortex_m7.conv2d.partial_im2col import conv2d_partial
 logging.getLogger('autotvm').setLevel(logging.DEBUG)
 logging.getLogger('autotvm').addHandler(logging.StreamHandler(sys.stdout))
 
-DEV_CONFIG = micro.device.arm.stm32f746xx.default_config('127.0.0.1', 6666)
-
-DEVICE_ID = 'arm.stm32f746xx'
+DEVICE_ID = host.DEVICE_ID
 TARGET = tvm.target.create('c -device=micro_dev')
 
-# N_TRIAL = 1500
-# EARLY_STOPPING = 800
+if DEVICE_ID == stm32f746xx.DEVICE_ID:
+    SERVER_ADDR = '127.0.0.1'
+    SERVER_PORT = 6666
+    def generate_config(section_constraints=None):
+        return stm32f746xx.generate_config(
+            SERVER_ADDR,
+            SERVER_PORT,
+            section_constraints=section_constraints)
+    MICRO_HEADERS = CMSIS_HEADERS
+    MICRO_INCLUDE_PATHS = CMSIS_INCLUDE_PATHS
+    # per-conv op strategies (first entry is the strategy of the first conv and so on).
+    # we want the ability to configure the op strategy, instead of just using
+    # the best strategy in the log, because certain strategy combos have a
+    # memory footprint that exceeds the available memory of the device.
+    OP_STRATEGIES = [
+        conv2d_direct,
+        conv2d_direct_simd,
+        conv2d_direct_simd,
+        ]
+elif DEVICE_ID == host.DEVICE_ID:
+    def generate_config(section_constraints=None):
+        return host.generate_config(section_constraints=section_constraints)
+    MICRO_HEADERS = None
+    MICRO_INCLUDE_PATHS = None
+    # we don't have SIMD schedules for the host
+    OP_STRATEGIES = [
+        conv2d_direct,
+        conv2d_direct,
+        conv2d_direct,
+        ]
+else:
+    raise RuntimeErorr(f'unknown device ID "{DEVICE_ID}"')
+
+DEV_CONFIG = generate_config()
+
 N_TRIAL = 500
 EARLY_STOPPING = 250
 # N_TRIAL = 1
 # EARLY_STOPPING = 1
 
 N_PER_TRIAL = 15
+N_PARALLEL = None
 
 TRACKER_ADDR = '0.0.0.0'
 TRACKER_PORT = 9190
@@ -191,17 +227,28 @@ def get_num_devices(dev_id):
 
 
 def tune_model(tasks, log_file_name):
-    n_parallel = get_num_devices(DEVICE_ID)
-    #print('FORCING N_PARALLEL TO 1')
-    #n_parallel = 1
+    if N_PARALLEL is None:
+        n_parallel = get_num_devices(DEVICE_ID)
+    else:
+        n_parallel = N_PARALLEL
 
     print('[Tuning]')
 
+    build_func = tvm.micro.cross_compiler(
+        DEV_CONFIG,
+        micro.LibType.OPERATOR,
+        lib_headers=MICRO_HEADERS,
+        lib_include_paths=MICRO_INCLUDE_PATHS)
+    runner = autotvm.RPCRunner(
+        DEVICE_ID,
+        TRACKER_ADDR,
+        TRACKER_PORT,
+        n_parallel=n_parallel,
+        number=N_PER_TRIAL,
+        timeout=TIMEOUT)
     measure_option = autotvm.measure_option(
-            builder=autotvm.LocalBuilder(
-                build_func=tvm.micro.cross_compiler(DEV_CONFIG, micro.LibType.OPERATOR, lib_include_paths=CMSIS_INCLUDE_PATHS)),
-            runner=autotvm.RPCRunner(DEVICE_ID, TRACKER_ADDR, TRACKER_PORT, n_parallel=n_parallel, number=N_PER_TRIAL, timeout=TIMEOUT)
-            )
+        builder=autotvm.LocalBuilder(build_func=build_func),
+        runner=runner)
 
     # create tmp log file
     tmp_log_file = log_file_name + '.tmp'
@@ -329,15 +376,15 @@ def get_tasks(template_key):
         data_layout = conv2d_direct.default_data_layout
         kernel_layout = conv2d_direct.default_kernel_layout
     elif template_key == 'direct_simd':
-        @autotvm.task.register('topi_nn_conv2d', override=True)
-        def _conv2d_direct_simd(*args, **kwargs):
-            return conv2d_direct_simd(*args, **kwargs)
+        # @autotvm.task.register('topi_nn_conv2d', override=True)
+        # def _conv2d_direct_simd(*args, **kwargs):
+        #     return conv2d_direct_simd(*args, **kwargs)
         data_layout = conv2d_direct_simd.default_data_layout
         kernel_layout = conv2d_direct_simd.default_kernel_layout
     elif template_key == 'partial_im2col':
-        @autotvm.task.register('topi_nn_conv2d', override=True)
-        def _conv2d_partial_im2col(*args, **kwargs):
-            return conv2d_partial_im2col(*args, **kwargs)
+        # @autotvm.task.register('topi_nn_conv2d', override=True)
+        # def _conv2d_partial_im2col(*args, **kwargs):
+        #     return conv2d_partial_im2col(*args, **kwargs)
         data_layout = conv2d_partial_im2col.default_data_layout
         kernel_layout = conv2d_partial_im2col.default_kernel_layout
     else:
@@ -350,7 +397,7 @@ def get_tasks(template_key):
     #mod, params = gen_conv2d('NHWC', 'HWOI')
 
     mod, params = gen_cifar10_cnn(
-        data_layout, kernel_layout, op_strategy=template_key, use_random_params=True)
+        data_layout, kernel_layout, input_op_strategy=template_key, use_random_params=True)
 
     tasks = collect_conv_tasks(mod['main'], TARGET, template_key)
 
@@ -380,12 +427,9 @@ def main():
         log_file_name = f'{DEVICE_ID}.{template_key}.e2e.log'
 
         update_rpc_server_dev_cfg(template_key)
-        # tasks = get_tasks(template_key)
-        tasks = [get_tasks(template_key)[0]]
+        tasks = get_tasks(template_key)
 
         tune_model(tasks, log_file_name)
-
-        assert False, 'make it so you\'re using all 3 tasks again'
 
 
 if __name__ == '__main__':

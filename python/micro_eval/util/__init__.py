@@ -102,16 +102,6 @@ class NamedType:
 
 class BakedType:
     def __init__(self, dim_iter: Iterable[Tuple[str, int]], dtype=None):
-        # layout = []
-        # shape = []
-        # assert isinstance(dim_iter, Iterable)
-        # for dim_name, dim_size in dim_iter:
-        #     # assert len(dim_name) == 1, 'dimension names must be single characters'
-        #     # setattr(self, dim_name, dim_size)
-        #     layout.append(dim_name)
-        #     shape.append(dim_size)
-        # self.layout = layout
-        # self.shape = tuple(shape)
         self.dims = OrderedDict(list(dim_iter))
         if dtype is not None:
             self._dtype = dtype
@@ -144,15 +134,6 @@ class BakedType:
     def dtype(self):
         assert hasattr(self, '_dtype'), 'no dtype has been set'
         return self._dtype
-
-
-# def transform_data_layout(data_np, from_layout, to_layout):
-#     indices = []
-#     for dim in to_layout:
-#         idx = from_layout.index(dim)
-#         assert idx != -1
-#         indices.append(idx)
-#     return data_np.transpose(tuple(indices))
 
 
 def get_axis_len(iter_var):
@@ -208,6 +189,8 @@ def relay_micro_build(func, dev_config, target, params=None, lib_headers=None, l
     with relay.build_config(opt_level=3, disabled_pass={"AlterOpLayout"}):
         with tvm.build_config(disable_vectorize=True):
             graph, c_mod, params = relay.build(func, target=target, params=params)
+    with open('cifar10_cnn_graph.json', 'w') as f:
+        f.write(graph)
     micro_mod = micro.create_micro_mod(c_mod, dev_config, lib_headers=lib_headers, lib_include_paths=lib_include_paths)
     ctx = tvm.micro_dev(0)
     if DEBUG_MODE:
