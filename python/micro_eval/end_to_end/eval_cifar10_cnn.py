@@ -44,9 +44,7 @@ MICRO_HEADERS = util.CMSIS_HEADERS
 MICRO_INCLUDE_PATHS = util.CMSIS_INCLUDE_PATHS
 
 
-###################
-# MODEL/DATA UTIL #
-###################
+# Model/Data util
 def get_sample_points(n):
     """Grabs a single input/label pair from MNIST"""
     ctx = mx.cpu()
@@ -68,9 +66,7 @@ def get_sample_points(n):
     return samples
 
 
-################
-# CMSIS CONFIG #
-################
+# CMSIS config
 CIFAR10_SRC_PATH = f'{util.get_repo_root()}/cmsis_src/cmsis_cifar10_cnn/cmsis_cifar10_cnn.c'
 CIFAR10_INCLUDE_PATH = f'{util.get_repo_root()}/cmsis_src/cmsis_cifar10_cnn'
 CMSIS_SRC_PATHS = [
@@ -85,9 +81,7 @@ CMSIS_SRC_PATHS = [
     f'{util.CMSIS_NN_PATH}/CMSIS/NN/Source/PoolingFunctions/arm_pool_q7_HWC.c',
 ]
 
-##############
-# EVALUATION #
-##############
+# Evaluation
 CIFAR10_CLASSES = ['Plane', 'Car', 'Bird', 'Cat', 'Deer', 'Dog', 'Frog', 'Horse', 'Ship', 'Truck']
 NUM_SAMPLES = 10
 
@@ -106,11 +100,12 @@ CMSIS_SEC_CONTRAINTS = {
 }
 
 
-def eval_interp(args, target, samples):
+def eval_interp_cpu(args, target, samples, results):
+    mod = model_util.build_relay_mod(args.cifar10_conv_op_impl)
     with relay.build_config(opt_level=3, disabled_pass={"AlterOpLayout"}):
-        intrp_output_np = util.eval_relay_intrp(
-            mod, [image_np] + [params[param.name_hint] for param in mod['main'].params[1:]])
-        cpu_graph_output_np = util.eval_cpu_graph_runtime(mod, params, {'data': image_np})
+        results['interp'] = util.eval_relay_intrp(
+            mod.mod, [image_np] + [mod.params[param.name_hint] for param in mod.mod['main'].params[1:]])
+        results['cpu_graph'] = util.eval_cpu_graph_runtime(mod.mod, mod.params, {'data': image_np})
 
 
 def eval_cmsis(args, target, samples):
@@ -275,22 +270,8 @@ def eval_micro(args, target, samples):
     micro_dev_config = generate_config(args.openocd_server_hostport, MICRO_SEC_CONSTRAINTS)
     util.reset_gdbinit(micro_dev_config)
 
-    # USE_SIMD = True
-    # if USE_SIMD:
-    #     # don't use SIMD layout in the first layer
-    #     KERNEL_LAYOUTS = ['HWIO', 'HWOI', 'HWOI']
-    # else:
-    #     DATA_LAYOUT = 'NHWC'
-    #     KERNEL_LAYOUTS = 'HWIO'
-
-    DEVICE_ID = 'arm.stm32f746xx'
-    #E2E_LOG_FILE_NAME = f'{DEVICE_ID}.e2e.log'
-
-    # E2E_LOG_FILE_NAME = f'autotvm_logs/pre_simd/{DEVICE_ID}.e2e.log.manually_fixed'
-
     mod = model_util.build_relay_mod(args.cifar10_conv_op_impl)
 
-    # op_strategy = 'direct_simd'
     LOGGER.debug('[Initting]')
     with micro.Session(micro_dev_config) as sess:
         LOGGER.debug('[Building]')
@@ -400,12 +381,13 @@ def main():
         results[model_name] = globals()[f'eval_{model_name}'](args, target, samples)
 
     if args.validate:
-        print(intrp_output_np)
+        eval_interp_cpu(args, target, samples, results)
+        print(results['interp'])
         print()
-        print(cpu_graph_output_np)
+        print(results['interp'])
 
-        print('intrp matches CPU? ' + str(np.allclose(intrp_output_np.astype('float32'), cpu_graph_output_np.astype('float32'))))
-        print('micro matches intrp? ' + str(np.allclose(micro_output_np.astype('float32'), intrp_output_np.astype('float32'))))
+        print('intrp matches CPU? ' + str(np.allclose(results['interp'].astype('float32'), results['interp'].astype('float32'))))
+        print('micro matches intrp? ' + str(np.allclose(results['micro'].astype('float32'), results['interp'].astype('float32'))))
 
     if args.debug_runtime:
         micro_outputs = load_outputs(f'{util.get_repo_root()}/debug/micro/_tvmdbg_ctx_MICRO_DEV_0/output_tensors.params')

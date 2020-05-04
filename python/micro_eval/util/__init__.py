@@ -29,6 +29,7 @@ if 'CMSIS_NN_PATH' not in os.environ:
     raise RuntimeError('must have "CMSIS_NN_PATH" in environment')
 if 'CMSIS_ST_PATH' not in os.environ:
     raise RuntimeError('must have "CMSIS_ST_PATH" in environment')
+
 CMSIS_NN_PATH = os.environ['CMSIS_NN_PATH']
 CMSIS_ST_PATH = os.environ['CMSIS_ST_PATH']
 CMSIS_HEADERS = [

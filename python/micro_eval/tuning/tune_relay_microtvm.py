@@ -225,7 +225,7 @@ def tune_model(rpc_config_base, num_servers, num_trials, tasks, log_file_name):
             # start tuning
             n_trial = min(num_trials, len(task.config_space))
             tuner.tune(n_trial=n_trial,
-                       early_stopping=n_trial, #EARLY_STOPPING,
+                       early_stopping=n_trial,
                        measure_option=measure_option,
                        callbacks=[
                            autotvm.callback.progress_bar(n_trial, prefix=prefix, si_prefix='k'),
@@ -379,6 +379,8 @@ def get_tasks(args):
         tasks = autotvm.task.extract_from_program(mod.mod['main'], mod.params, TARGET)
 
     print(f'extracted {len(tasks)} tasks: {tasks}')
+    for i, t in enumerate(tasks):
+        print(f' * Task {i:d}: config space is {len(t.config_space)}')
     assert len(tasks) == 3
 
     return tasks
