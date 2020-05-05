@@ -1,0 +1,6 @@
+[submodule "3rdparty/STM32CubeF7"]
+	path = 3rdparty/STM32CubeF7
+	url = https://github.com/STMicroelectronics/STM32CubeF7
+[submodule "3rdparty/CMSIS_5"]
+	path = 3rdparty/CMSIS_5
+	url = https://github.com/ARM-software/CMSIS_5

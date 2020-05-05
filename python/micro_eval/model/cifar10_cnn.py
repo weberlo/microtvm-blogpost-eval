@@ -1,9 +1,83 @@
+import json
 import numpy as np
 
 import tvm
 from tvm import relay
 
-from micro_eval.util import NamedType
+from micro_eval import util
+
+
+CIFAR10_CLASSES = ['Plane', 'Car', 'Bird', 'Cat', 'Deer', 'Dog', 'Frog', 'Horse', 'Ship', 'Truck']
+
+
+# Generated random params, keyed by (data_layout, kernel_layouts).
+GENERATED_RANDOM_PARAMS = {}
+
+
+_RANDOM_BOUNDS = {
+    'mean_data': (130, 140),
+    'conv0_weight': (-30, 30),
+    'conv0_bias': (-3, 3),
+    'conv1_weight': (-30, 30),
+    'conv1_bias': (-3, 3),
+    'conv2_weight': (-30, 30),
+    'conv2_bias': (-3, 3),
+    'dense0_weight': (-30, 30),
+    'dense0_bias': (-3, 3),
+}
+
+
+def _gen_random_params(mod, param_shapes):
+    _cache_key = (tuple(k, v.shape) for k in sorted(param_shapes.keys()))
+    if _cache_key not in GENERATED_RANDOM_PARAMS:
+        # generate random params
+        params = {}
+        for param in mod['main'].params[1:]:
+            name = param.name_hint
+            low, high = _RANDOM_BOUNDS[name]
+            rand_tensor = param_shapes[name].gen_rand_tensor(low, high)
+            params[param.name_hint] = tvm.nd.array(rand_tensor)
+
+        GENERATED_RANDOM_PARAMS[_cache_key] = params
+
+    return GENERATED_RANDOM_PARAMS[_cache_key]
+
+
+_CMSIS_PARAM_SHAPES = {
+    'mean_data': util.LabelledShape.from_ordered_kwargs(N=1, H=32, W=32, C=3, dtype='uint8'),
+    'conv0_weight': util.LabelledShape.from_ordered_kwargs(O=32, I=3, H=5, W=5, dtype='int8'),
+    'conv0_bias': util.LabelledShape.from_ordered_kwargs(B=32, dtype='int8'),
+    'conv1_weight': util.LabelledShape.from_ordered_kwargs(O=32, I=3, H=5, W=5, dtype='int8'),
+    'conv1_bias': util.LabelledShape.from_ordered_kwargs(B=32, dtype='int8'),
+    'conv2_weight': util.LabelledShape.from_ordered_kwargs(O=32, I=3, H=5, W=5, dtype='int8'),
+    'conv2_bias': util.LabelledShape.from_ordered_kwargs(B=32, dtype='int8'),
+    'dense0_weight': util.LabelledShape.from_ordered_kwargs(O=10, I=1024, dtype='int8'),
+    'dense0_bias': util.LabelledShape.from_ordered_kwargs(O=10, dtype='int8'),
+}
+
+
+def _load_cmsis_params(mod, param_shapes):
+    with open(f'{util.get_repo_root()}/data/cifar10_cnn_params.json') as f:
+        cmsis_params = json.load(f)
+
+    params = {}
+    for formal_param in mod['main'].params[1:]:  # exclude data
+        name = formal_param.name_hint
+        cmsis_tensor = util.LabelledTensor(
+            data=np.array(cmsis_params[name]).asdtype(_CSMIS_PARAM_SHAPES[name].dtype),
+            shape=_CMSIS_PARAM_SHAPES[name])
+
+        param_shape = param_shapes[name]
+        relay_shape = util.LabelledShape(
+            zip(param_shape.layout, [x.value for x in formal_param.checked_type.shape]),
+            dtype=param_shape.dtype)
+
+        assert param_shape.dims == relay_shape.dims
+        param = cmsis_tensor.reshape(param_shape)
+        params[name] = tvm.nd.array(relay_np, tvm.cpu(0))
+
+    return params
+
 
 def gen_cifar10_cnn(data_layout, kernel_layouts, op_strategy='direct', use_random_params=False):
     # kernel layouts are specified per conv, but if only a single layout is
@@ -13,30 +87,35 @@ def gen_cifar10_cnn(data_layout, kernel_layouts, op_strategy='direct', use_rando
     # TODO change relay/op/tensor/unary.cc _make.clip to accept exprs instead of doubles
     # TODO discrepancies between outputs might be a result of the bias_add op
     # not matching the semantics of the CMSIS bias add.
+
+    data_shape = util.LabelledShape.from_ordered_dict(N=1, C=3, H=32, W=32, dtype='uint8')
+    conv0_weight_shape = util.LabelledShape.from_ordered_dict(O=32, I=3, H=5, W=5, dtype='int8')
     if op_strategy in ('direct_simd', 'partial_im2col'):
         # to fit our SIMD intrinsic, we make the 'C' dimension a multiple of 4
-        data_shape_dict = dict(N=1, C=4, H=32, W=32)
-        conv0_shape_dict = dict(O=32, I=4, H=5, W=5)
-    else:
-        data_shape_dict = dict(N=1, C=3, H=32, W=32)
-        conv0_shape_dict = dict(O=32, I=3, H=5, W=5)
-    data_shape = NamedType(data_shape_dict).with_layout(data_layout).shape
-    conv0_kernel_shape = NamedType(conv0_shape_dict).with_layout(kernel_layouts[0]).shape
-    conv1_kernel_shape = NamedType(dict(O=32, I=32, H=5, W=5)).with_layout(kernel_layouts[1]).shape
-    conv2_kernel_shape = NamedType(dict(O=64, I=32, H=5, W=5)).with_layout(kernel_layouts[2]).shape
+        data_shape = util.LabelledShape.from_ordered_dict(N=1, C=4, H=32, W=32, dtype='uint8')
+        conv0_weight_shape = util.LabelledShape.from_ordered_dict(O=32, I=4, H=5, W=5, dtype='int8')
+
+    param_shapes = collections.OrderedDict([
+        ('data', data_shape),
+        ('mean_data', data_shape),
+        ('conv0_weight', conv0_weight_shape),
+        ('conv0_bias', util.LabelledShape.from_ordered_dict(B=32, dtype='int8')),
+        ('conv1_weight', util.LabelledShape.from_dims_and_layout(dict(O=32, I=32, H=5, W=5), layout=kernel_layouts[1])),
+        ('conv1_bias', util.LabelledShape.from_ordered_dict(B=32, dtype='int8')),
+        ('conv2_weight', util.LabelledShape.from_dims_and_layout(dict(O=64, I=32, H=5, W=5), layout=kernel_layouts[2])),
+        ('conv1_bias', util.LabelledShape.from_ordered_dict(B=64, dtype='int8')),
+        ('dense0_weight', util.LabelledShape.from_ordered_dict(O=10, I=1024, dtype='int8')),
+        ('dense0_bias', util.LabelledShape.from_ordered_dict(B=10, dtype='int8')),
+    ])
     bias_add_axis = data_layout.index('C')
+    params = []
+    for p, s in param_shapes.items():
+        params.append(f'        %{p}: Tensor[{s.shape}, {s.dtype}]')
+    param_args = params.join(',\n')
+    print('params', param_args)
     mod = relay.fromtext(f"""
     v0.0.4
-    def @main(%data: Tensor[{data_shape}, uint8],
-        %mean_data: Tensor[{data_shape}, uint8],
-        %conv0_weight: Tensor[{conv0_kernel_shape}, int8],
-        %conv0_bias: Tensor[(32), int8],
-        %conv1_weight: Tensor[{conv1_kernel_shape}, int8],
-        %conv1_bias: Tensor[(32), int8],
-        %conv2_weight: Tensor[{conv2_kernel_shape}, int8],
-        %conv2_bias: Tensor[(64), int8],
-        %dense0_weight: Tensor[(10, 1024), int8],
-        %dense0_bias: Tensor[(10), int8]) {{
+    def @main({param_args}) {{
       %0 = cast(cast(%data, "int16") - cast(%mean_data, "int16"), "int8");
       %1 = nn.conv2d(
              %0,
@@ -101,52 +180,8 @@ def gen_cifar10_cnn(data_layout, kernel_layouts, op_strategy='direct', use_rando
     }}
     """)
     if use_random_params:
-        # generate random params
-        params = {}
-        for param in mod['main'].params[1:]:
-            shape = list(map(lambda x: x.value, param.checked_type.shape))
-            dtype = param.checked_type.dtype
-            if 'bias' in param.name_hint:
-                result = tvm.nd.array(np.random.randint(-3, 3, size=shape, dtype=dtype), tvm.cpu(0))
-            elif 'weight' in param.name_hint:
-                result = tvm.nd.array(np.random.randint(-30, 30, size=shape, dtype=dtype), tvm.cpu(0))
-            elif 'mean' in param.name_hint:
-                result = tvm.nd.array(np.random.randint(130, 140, size=shape, dtype=dtype), tvm.cpu(0))
-            else:
-                assert False
-            params[param.name_hint] = result
+        params = _gen_random_params(mod, data_layout, kernel_layouts)
     else:
-        with open('cifar10_cnn_params.json', 'r') as f:
-            params = json.load(f)
-        for formal_param in mod['main'].params[1:]:
-            param_shape = list(map(lambda x: x.value, formal_param.checked_type.shape))
-            dtype = formal_param.checked_type.dtype
-            name = formal_param.name_hint
+        params = _load_cmsis_params(mod, param_shapes)
 
-            orig_np = np.array(params[name]).astype(dtype)
-
-            if name == 'mean_data':
-                shape = NamedType(data_layout, param_shape)
-                cmsis_data_layout = 'NHWC'
-                cmsis_shape = shape.get_shape(cmsis_data_layout)
-                cmsis_np = orig_np.reshape(cmsis_shape)
-                relay_np = transform_data_layout(cmsis_np, cmsis_data_layout, data_layout)
-            elif 'conv' in name and 'weight' in name:
-                shape = NamedType(kernel_layout, param_shape)
-                cmsis_kernel_layout = 'IHWO'
-                cmsis_shape = shape.get_shape(cmsis_kernel_layout)
-                cmsis_np = orig_np.reshape(cmsis_shape)
-                relay_np = transform_data_layout(cmsis_np, cmsis_kernel_layout, kernel_layout)
-            elif 'dense' in name and 'weight' in name:
-                dense_layout = 'OI'
-                shape = NamedType(dense_layout, param_shape)
-                # TODO they might be doing matmul weight reordering (figure 6 in their paper)
-                cmsis_dense_layout = 'IO'
-                cmsis_shape = shape.get_shape(cmsis_dense_layout)
-                cmsis_np = orig_np.reshape(cmsis_shape)
-                relay_np = transform_data_layout(cmsis_np, cmsis_dense_layout, dense_layout)
-            else:
-                assert name in ['conv0_bias', 'conv1_bias', 'conv2_bias', 'dense0_bias']
-                relay_np = orig_np
-            params[name] = tvm.nd.array(relay_np, tvm.cpu(0))
     return mod, params

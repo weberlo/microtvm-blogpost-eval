@@ -45,7 +45,7 @@ MICRO_INCLUDE_PATHS = util.CMSIS_INCLUDE_PATHS
 
 
 # Model/Data util
-def get_sample_points(n):
+def get_sample_points(n, has_simd_strategy):
     """Grabs a single input/label pair from MNIST"""
     ctx = mx.cpu()
     # Load a random image from the test dataset
@@ -58,9 +58,10 @@ def get_sample_points(n):
     for i, (data, label) in zip(range(n), sample_data):
         if i == n:
             break
-        data_np = data.as_in_context(ctx).asnumpy()
+        data_np = np.copy(data.as_in_context(ctx).asnumpy())
         # gluon data is in NHWC format
-        data_nt = util.NamedTensor(data_np, 'NHWC')
+        data_nt = util.LabelledTensor(data_np, util.LabelledShape(zip('NHWC', data_np.shape), 'uint8'))
+
         label = int(label.asnumpy()[0])
         samples.append({'data': data_nt, 'label': label})
     return samples
@@ -81,10 +82,6 @@ CMSIS_SRC_PATHS = [
     f'{util.CMSIS_NN_PATH}/CMSIS/NN/Source/PoolingFunctions/arm_pool_q7_HWC.c',
 ]
 
-# Evaluation
-CIFAR10_CLASSES = ['Plane', 'Car', 'Bird', 'Cat', 'Deer', 'Dog', 'Frog', 'Horse', 'Ship', 'Truck']
-NUM_SAMPLES = 10
-
 
 # CMSIS requires different section spacing than micro.
 CMSIS_SEC_CONTRAINTS = {
@@ -100,12 +97,46 @@ CMSIS_SEC_CONTRAINTS = {
 }
 
 
-def eval_interp_cpu(args, target, samples, results):
-    mod = model_util.build_relay_mod(args.cifar10_conv_op_impl)
+def eval_interp(args, target, samples):
+    mod = model_util.build_relay_mod(args.cifar10_conv_op_impl, 'x86',
+                                     use_random_params=not args.validate_against)
     with relay.build_config(opt_level=3, disabled_pass={"AlterOpLayout"}):
-        results['interp'] = util.eval_relay_intrp(
-            mod.mod, [image_np] + [mod.params[param.name_hint] for param in mod.mod['main'].params[1:]])
-        results['cpu_graph'] = util.eval_cpu_graph_runtime(mod.mod, mod.params, {'data': image_np})
+        main_gv = relay.GlobalVar('main')
+        ir_mod = tvm.IRModule({})
+        ir_mod[main_gv] = mod.mod['main']
+        intrp = relay.create_executor("debug", ir_mod)
+        f = intrp.evaluate(main_gv)
+
+    predictions = []
+    for i, sample in enumerate(samples):
+        data_nt = sample['data']
+        if model_util.has_simd_strategy(args.cifar10_conv_op_impl):
+            data_nt = data_nt.resize(C=4)
+
+        data_np = data_nt.with_layout(mod.data_layout).data
+        label = sample['label']
+        result = f(data_np, *[mod.params[param.name_hint] for param in mod.mod['main'].params[1:]])
+        predictions.append(result.data.asnumpy())
+
+
+def eval_cpu(args, target, samples):
+    mod = model_util.build_relay_mod(args.cifar10_conv_op_impl, 'x86',
+                                     use_random_params=not args.validate_against)
+    with relay.build_config(opt_level=3, disabled_pass={"AlterOpLayout"}):
+        graph, op_mod, params = relay.build(mod['main'], target="llvm", params=params)
+        if util.DEBUG_MODE:
+            graph_mod = debug_runtime.create(graph, op_mod, tvm.cpu(0), dump_root=f'{util.get_repo_root()}/debug/cpu')
+        else:
+            graph_mod = graph_runtime.create(graph, op_mod, tvm.cpu(0))
+
+        graph_mod.set_input(**params)
+
+    predictions = []
+    for i, sample in enumerate(samples):
+        result = graph_mod.run({'data': sample['data'].data})
+        predictions.append(result.getoutput(0).asnumpy())
+
+    return predictions
 
 
 def eval_cmsis(args, target, samples):
@@ -152,8 +183,8 @@ def eval_cmsis(args, target, samples):
 
             cmsis_output_np = output_tvm.asnumpy()
             LOGGER.info(f'  output: {cmsis_output_np}')
-            prediction = CIFAR10_CLASSES[np.argmax(cmsis_output_np)]
-            label = CIFAR10_CLASSES[label]
+            prediction = cifar10_cnn.CIFAR10_CLASSES[np.argmax(cmsis_output_np)]
+            label = cifar10_cnn.CIFAR10_CLASSES[label]
             LOGGER.info(f'  prediction was {prediction}')
             LOGGER.info(f'  actual was {label}')
 
@@ -161,99 +192,7 @@ def eval_cmsis(args, target, samples):
     return results
 
 
-KERNEL_LAYOUTS = {
-    'conv2d_direct': 'HWIO',
-    'conv2d_direct_simd': 'HWOI',
-}
-
-def eval_prebuilt_micro(args, target, samples):
-    CMSIS_SEC_CONTRAINTS = {
-        'text': (20000, MemConstraint.ABSOLUTE_BYTES),
-        'rodata': (4096, MemConstraint.ABSOLUTE_BYTES),
-        'data': (100000, MemConstraint.ABSOLUTE_BYTES),
-        'bss': (644, MemConstraint.ABSOLUTE_BYTES),
-        'args': (4096, MemConstraint.ABSOLUTE_BYTES),
-        'heap': (100.0, MemConstraint.WEIGHT),
-        'workspace': (52000, MemConstraint.ABSOLUTE_BYTES),
-        # NOTE we need a deeper stack: since they make deep func calls
-        'stack': (288, MemConstraint.ABSOLUTE_BYTES),
-    }
-    prebuilt_dev_config = generate_config(args.openocd_server_hostport, CMSIS_SEC_CONTRAINTS)
-    util.reset_gdbinit(prebuilt_dev_config)
-
-    DATA_LAYOUT = 'NHWC'
-    DATA_SHAPE = (1, 32, 32, 3)
-    OUTPUT_SHAPE = (10,)
-
-    IN_DTYPE = 'uint8'
-    OUT_DTYPE = 'int8'
-
-    # Begin a session
-    LOGGER.debug('[Initting]')
-    mod, params = cifar10_cnn.gen_cifar10_cnn(
-        data_layout, kernel_layouts,
-        op_strategy=op_strategy,
-        use_random_params=USE_RANDOM_PARAMS)
-    # TODO probably need a different dev conf for cmsis
-    with micro.Session(prebuilt_dev_config) as sess:
-        # Build the function
-        LOGGER.debug('[Building]')
-
-        def build_graph_mod():
-            return util.relay_micro_build(
-                mod['main'],
-                prebuilt_dev_config, target,
-                params=params,
-                lib_headers=MICRO_HEADERS,
-                lib_include_paths=MICRO_INCLUDE_PATHS)
-
-        with TARGET:
-            if USE_TUNED_SCHEDULES:
-                with autotvm.apply_history_best(E2E_LOG_FILE_NAME):
-                    graph_mod = build_graph_mod()
-        micro_mod = create_micro_mod(
-            util.MockCMod("cifar10_cnn.c"),
-            prebuilt_dev_config,
-            lib_src_paths=[],
-            lib_headers=MICRO_HEADERS,
-            lib_include_paths=util.CMSIS_INCLUDE_PATHS)
-
-        graph_dump_json_path = (
-            f'{util.get_repo_root()}/debug/micro/_tvmdbg_ctx_MICRO_DEV_0/_tvmdbg_graph_dump.json')
-        with open(graph_dump_json_path) as json_f:
-            graph = json.load(json_f)
-        mod = graph_runtime.create(graph, micro_mod, ctx)
-        micro_func = micro_mod['arm_cifar10_cnn_wrapper']
-        ctx = tvm.micro_dev(0)
-
-        output_tvm = tvm.nd.array(np.zeros(OUTPUT_SHAPE, dtype=OUT_DTYPE), ctx)
-
-        results = []
-        for i, sample in enumerate(samples):
-            LOGGER.info(f'[Sample {i}]')
-            data_nt = sample['data']
-            label = sample['label']
-
-            data_np = data_nt.with_layout(DATA_LAYOUT).data
-            assert data_np.shape == DATA_SHAPE
-            assert data_np.dtype == IN_DTYPE
-            data_tvm = tvm.nd.array(data_np, ctx=ctx)
-
-            exec_time = util.benchmark_micro_func(
-                sess, micro_func, [data_tvm, output_tvm], 1, 0) #time_overhead)
-            LOGGER.info(f'  model execution took {exec_time} milliseconds')
-
-            cmsis_output_np = output_tvm.asnumpy()
-            LOGGER.info(f'  output: {cmsis_output_np}')
-            prediction = CIFAR10_CLASSES[np.argmax(cmsis_output_np)]
-            label = CIFAR10_CLASSES[label]
-            LOGGER.info(f'  prediction was {prediction}')
-            LOGGER.info(f'  actual was {label}')
-
-            results.append(cmsis_output_np)
-    return results
-
-
+# Section constraints to use for the compiled uTVM CIFAR10 implementation.
 MICRO_SEC_CONSTRAINTS = {
     'text': (23000, MemConstraint.ABSOLUTE_BYTES),
     'rodata': (300, MemConstraint.ABSOLUTE_BYTES),
@@ -266,11 +205,19 @@ MICRO_SEC_CONSTRAINTS = {
 }
 
 
-def eval_micro(args, target, samples):
+def eval_utvm(args, target, samples):
+    """Compile and evaluate uTVM CIFAR10 implementation.
+
+    Params
+    ------
+
+    args:
+    """
     micro_dev_config = generate_config(args.openocd_server_hostport, MICRO_SEC_CONSTRAINTS)
     util.reset_gdbinit(micro_dev_config)
 
-    mod = model_util.build_relay_mod(args.cifar10_conv_op_impl)
+    mod = model_util.build_relay_mod(args.cifar10_conv_op_impl, 'micro_dev',
+                                     use_random_params=not args.validate_against)
 
     LOGGER.debug('[Initting]')
     with micro.Session(micro_dev_config) as sess:
@@ -296,9 +243,8 @@ def eval_micro(args, target, samples):
             LOGGER.info('[[Micro Untuned]]')
         for i, sample in enumerate(samples):
             LOGGER.info(f'[Sample {i}]')
-            data_nt = sample['data']
             if mod.has_simd_strategy:
-                 data_nt.resize(C=4)
+                data_nt = data_nt.resize(C=4)
             data_np = data_nt.with_layout(mod.data_layout).data
             label = sample['label']
 
@@ -348,21 +294,25 @@ def save_outputs_json(outputs, path):
         json.dump(res_outputs, f, sort_keys=True, indent=4)
 
 
+ALL_MODELS = ['cmsis', 'utvm', 'interp', 'cpu']
+
+
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('models', choices=['cmsis', 'micro'], nargs='+', help='models to evaluate')
+    parser.add_argument('models', choices=ALL_MODELS, nargs='+', help='models to evaluate')
     parser.add_argument('--use-tuned-schedule', nargs='?', default='arm.stm32f746xx.e2e.log',
                         help=('Use a tuned schedule in evaluating the micro model. The path to the '
                               'tuned log can be given; if not, the default symlink generated by '
                               'tune_relay_microtvm.py is used.'))
+    parser.add_argument('--num-samples', type=int, default=10, help='number of image samples to try')
     parser.add_argument('--openocd-server-hostport',
                         # NOTE: need to explicitly choose ipv4 address, not localhost.
                         default='127.0.0.1:6666',
                         help='Address of the OpenOCD TCL server to use for device communication.')
     parser.add_argument('--debug-runtime', action='store_true',
                         help='Use debug runtime and print graph debugging info.')
-    parser.add_argument('--validate', action='store_true',
-                        help='Validate on-device output against CPU graph runtime')
+    parser.add_argument('--validate-against', choices=ALL_MODELS, const='cpu', nargs='?',
+                        help='Validate on-device output against the given runtime (by default, cpu)')
     model_util.define_cifar10_conv_op_impl(parser)
     return parser.parse_args()
 
@@ -374,23 +324,22 @@ def main():
 
     target = tvm.target.create('c -device=micro_dev')
 
-    samples = get_sample_points(NUM_SAMPLES)
+    samples = get_sample_points(args.num_samples, model_util.has_simd_strategy(args.cifar10_conv_op_impl))
 
     results = {}
+    to_run = args.models
+    if args.validate_against and args.validate_against not in to_run:
+        to_run.append(args.validate_against)
     for model_name in args.models:
         results[model_name] = globals()[f'eval_{model_name}'](args, target, samples)
 
     if args.validate:
-        eval_interp_cpu(args, target, samples, results)
-        print(results['interp'])
-        print()
-        print(results['interp'])
-
-        print('intrp matches CPU? ' + str(np.allclose(results['interp'].astype('float32'), results['interp'].astype('float32'))))
-        print('micro matches intrp? ' + str(np.allclose(results['micro'].astype('float32'), results['interp'].astype('float32'))))
+        for model_name in to_run:
+            print('{} vs {}: allclose? {:s}'.format(
+                model_name, args.validate, np.allclose(results[model_name].astype('float32'), results[args.validate].astype('float32'))))
 
     if args.debug_runtime:
-        micro_outputs = load_outputs(f'{util.get_repo_root()}/debug/micro/_tvmdbg_ctx_MICRO_DEV_0/output_tensors.params')
+        micro_outputs = load_outputs(f'{util.MICRO_GDB_DEBUG_PATH}/_tvmdbg_ctx_MICRO_DEV_0/output_tensors.params')
         save_outputs_json(micro_outputs, 'micro_output.json')
 
         print(f'micro output keys: {micro_outputs.keys()}')

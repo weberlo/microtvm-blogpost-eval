@@ -1,7 +1,7 @@
 layout src
-target remote localhost:3336
-add-symbol-file tmp06do9kvr.obj
-add-symbol-file tmp_w1bvvnc.obj
+target remote localhost:3333
+add-symbol-file tmp9ds8nlo5.obj
+add-symbol-file tmpw8d6u3fk.obj
 set $pc = UTVMInit
 break UTVMDone
 

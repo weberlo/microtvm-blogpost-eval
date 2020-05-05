@@ -1,3 +1,4 @@
+from __future__ import annotations
 from collections import Iterable, OrderedDict
 import json
 import logging
@@ -10,7 +11,6 @@ import numpy as np
 import tvm
 import topi
 from tvm import autotvm, relay
-from tvm.relay import create_executor
 import tvm.micro as micro
 from tvm.micro import create_micro_mod
 from tvm.contrib import graph_runtime, util, download
@@ -25,13 +25,17 @@ from topi.nn.util import get_pad_tuple
 from topi.util import simplify, get_const_tuple, traverse_inline
 from topi.testing import conv2d_nchw_python
 
-if 'CMSIS_NN_PATH' not in os.environ:
-    raise RuntimeError('must have "CMSIS_NN_PATH" in environment')
-if 'CMSIS_ST_PATH' not in os.environ:
-    raise RuntimeError('must have "CMSIS_ST_PATH" in environment')
+REPO_ROOT = None
+def get_repo_root():
+    global REPO_ROOT
+    if REPO_ROOT is None:
+        REPO_ROOT = str(subprocess.check_output(['git', 'rev-parse', '--show-toplevel'],
+                                                cwd=os.path.dirname(__file__)), 'utf-8').strip('\n')
+    return REPO_ROOT
 
-CMSIS_NN_PATH = os.environ['CMSIS_NN_PATH']
-CMSIS_ST_PATH = os.environ['CMSIS_ST_PATH']
+
+CMSIS_NN_PATH = f'{get_repo_root()}/3rdparty/CMSIS_5'
+CMSIS_ST_PATH = f'{get_repo_root()}/3rdparty/STM32CubeF7/Drivers/CMSIS'
 CMSIS_HEADERS = [
     'cmsis_gcc.h',
     'arm_math.h',
@@ -44,13 +48,11 @@ CMSIS_INCLUDE_PATHS = [
     f'{CMSIS_ST_PATH}',
 ]
 
-REPO_ROOT = None
-def get_repo_root():
-    global REPO_ROOT
-    if REPO_ROOT is None:
-        REPO_ROOT = str(subprocess.check_output(['git', 'rev-parse', '--show-toplevel'],
-                                                cwd=os.path.dirname(__file__)), 'utf-8').strip('\n')
-    return REPO_ROOT
+
+if os.environ.get('CMSIS_ST_PATH', None) not in (None, CMSIS_ST_PATH):
+    print('NOTE: overriding environment variable CMSIS_ST_PATH', file=sys.stderr)
+    print(f' - new value: {CMSIS_ST_PATH}', file=sys.stderr)
+os.environ['CMSIS_ST_PATH'] = CMSIS_ST_PATH
 
 
 def get_logger(log_file_name):
@@ -66,87 +68,133 @@ def get_logger(log_file_name):
     return logger
 
 
-class NamedTensor:
-    def __init__(self, data: np.ndarray, layout: str):
-        self.typ = BakedType(zip(layout, data.shape), dtype=str(data.dtype))
-        self.data = data
+class LabelledTensor:
+    """A tensor with labelled axes."""
 
-    def with_layout(self, layout):
-        indices = []
-        for dim in layout:
-            idx = self.typ.layout.index(dim)
-            assert idx != -1
-            indices.append(idx)
-        return NamedTensor(self.data.transpose(tuple(indices)), layout)
+    def __init__(self, data: np.ndarray, shape: LabelledShape):
+        """Wraps an ndarray with a given string layout.
 
-    def resize(self, **new_dims):
-        for dim_name, dim_size in new_dims.items():
-            self.typ.dims[dim_name] = dim_size
-        self.data.resize(self.typ.shape)
+        Parameters
+        ----------
+        data : np.ndarray
+            The ndarray containing the underlying data.
 
-
-class NamedType:
-    def __init__(self, dim_dict: typing.Dict[str, int], dtype=None):
-        self.dim_dict = dim_dict
-        if dtype is not None:
-            self._dtype = dtype
-
-    def with_layout(self, layout):
-        layout_list = []
-        for dim_name in layout:
-            dim_size = self.dim_dict[dim_name]
-            layout_list.append((dim_name, dim_size))
-        return BakedType(layout_list, dtype=getattr(self, '_dtype', None))
-
-    def gen_rand_tensor(self, low, high) -> NamedTensor:
-        """Create a tensor with random entries between `low` and `high`.
-
-        Useful for testing multiple ops with different input layouts.
+        layout : str
+            A string naming the axes of `data`. Each char gives its corresponding axis a
+            single-char name.
         """
-        # create a baked type with an arbitrary layout to use its random tensor generation method
-        return self.with_layout(list(self.dim_dict.keys())).gen_rand_tensor(low, high)
+        self.data = data
+        self.shape = shape
 
-    def gen_empty(self) -> NamedTensor:
-        # create a baked type with an arbitrary layout to use its empty tensor generation method
-        return self.with_layout(list(self.dim_dict.keys())).gen_zero_tensor()
+    def transpose(self, other: LabelledShape):
+        mapping = self.shape.make_transpose_mapping(other)
+        return LabelledTensor(np.transpose(data, mapping), shape)
 
-    @property
-    def dtype(self):
-        assert hasattr(self, '_dtype'), 'no dtype has been set'
-        return self._dtype
+    def with_layout(self, layout):
+        new_shape_dims = OrderedDict([(l, self.shape.dims[l]) for l in layout])
+        return self.transpose(LabelledShape(new_shape_dims, self.shape.dtype))
 
 
-class BakedType:
-    def __init__(self, dim_iter: typing.Iterable[typing.Tuple[str, int]], dtype=None):
-        # layout = []
-        # shape = []
-        # assert isinstance(dim_iter, Iterable)
-        # for dim_name, dim_size in dim_iter:
-        #     # assert len(dim_name) == 1, 'dimension names must be single characters'
-        #     # setattr(self, dim_name, dim_size)
-        #     layout.append(dim_name)
-        #     shape.append(dim_size)
-        # self.layout = layout
-        # self.shape = tuple(shape)
-        self.dims = OrderedDict(list(dim_iter))
-        if dtype is not None:
-            self._dtype = dtype
+# class :
+#     def __init__(self, dim_dict: typing.Dict[str, int], dtype=None):
+#         self.dim_dict = dim_dict
+#         if dtype is not None:
+#             self._dtype = dtype
+
+#     def with_layout(self, layout):
+#         layout_list = []
+#         for dim_name in layout:
+#             dim_size = self.dim_dict[dim_name]
+#             layout_list.append((dim_name, dim_size))
+#         return BakedType(layout_list, dtype=getattr(self, '_dtype', None))
+
+#     def gen_rand_tensor(self, low, high) -> NamedTensor:
+#         """Create a tensor with random entries between `low` and `high`.
+
+#         Useful for testing multiple ops with different input layouts.
+#         """
+#         # create a baked type with an arbitrary layout to use its random tensor generation method
+#         return self.with_layout(list(self.dim_dict.keys())).gen_rand_tensor(low, high)
+
+#     def gen_empty(self) -> NamedTensor:
+#         # create a baked type with an arbitrary layout to use its empty tensor generation method
+#         return self.with_layout(list(self.dim_dict.keys())).gen_zero_tensor()
+
+#     @property
+#     def dtype(self):
+#         assert hasattr(self, '_dtype'), 'no dtype has been set'
+#         return self._dtype
+
+
+class LabelledShape:
+
+#    @classmethod
+#    def from_dims_and_layout(cls, dims: typing.Dict[str, int], layout: str, dtype: str):
+#        return cls(((l, dims[l]) for l in layout), dtype)
+
+#    @classmethod
+#    def from_ordered_kwargs(cls, dtype: str=None, **kw):
+#        return cls(kw.items(), dtype)
+
+    def __init__(self,
+                 dims: typing.Union[OrderedDict, NoneType] = None,
+                 dim_iter: typing.Union[typing.Iterable[typing.Tuple[str, int]], NoneType] = None,
+                 dtype: str = None,
+                 **kw):
+        if dims is not None:
+            self.dims = OrderedDict(dim_iter)
+        elif dim_iter is not None:
+            self.dims = OrderedDict(list(dim_iter))
+        else:
+            self.dims = OrderedDict(kw.items())
+
+        self.dtype = dtype
+
+    def __repr__(self):
+        dims = ', '.join(f'{k}={v}' for k, v in self.dims.items())
+        return f'{self.__class__.__name__}(dtype={self.dtype:r}, {dims})'
 
     def serialize(self):
         """Serialize to an AutoTVM style spec (e.g., `('TENSOR', (1, 2, 3), 'int8')`)."""
         return ('TENSOR', self.shape, self.dtype)
 
-    def gen_rand_tensor(self, low, high) -> NamedTensor:
+    def gen_rand_tensor(self, low, high) -> LabelledTensor:
         if 'int' in self.dtype:
             data_np = np.random.randint(low, high, size=self.shape, dtype=self.dtype)
         elif 'float' in self.dtype:
             data_np = np.random.uniform(low, high, size=self.shape, dtype=self.dtype)
         else:
             assert False, 'unknown dtype'
-        return NamedTensor(data_np, self.layout)
 
-    def gen_zero_tensor(self) -> NamedTensor:
-        return NamedTensor(np.zeros(self.shape, dtype=self.dtype), self.layout)
+        return LabelledTensor(data_np, self.layout)
+
+    def gen_zero_tensor(self) -> LabelledTensor:
+        return LabelledTensor(np.zeros(self.shape, dtype=self.dtype), self.layout)
+
+    def size(self):
+        prod = 1
+        for x in self.dims.values():
+            prod *= x
+        return prod
+
+    def make_transpose_mapping(self, other: LabelledShape):
+        print('transpose', self, other)
+        assert self.size == other.size
+        assert len(self.dims) == len(other.dims)
+
+        indices = []
+        self_dim_keys = list(self.dims.keys())
+        for dim_name, dim_value in other.dims.items():
+            idx = self_dim_keys.index(dim_name)
+            assert idx != -1
+            indices.append(idx)
+            assert dim_name in self.dims
+
+        return indices
+
+    def as_template_for(self, **new_dims):
+        return LabelledShape(((k, new_dims.get(k, self.dims[k])) for k in self.dims.keys()),
+                             self._dtype)
 
     @property
     def shape(self):
@@ -154,21 +202,7 @@ class BakedType:
 
     @property
     def layout(self):
-        return tuple(self.dims.keys())
-
-    @property
-    def dtype(self):
-        assert hasattr(self, '_dtype'), 'no dtype has been set'
-        return self._dtype
-
-
-# def transform_data_layout(data_np, from_layout, to_layout):
-#     indices = []
-#     for dim in to_layout:
-#         idx = from_layout.index(dim)
-#         assert idx != -1
-#         indices.append(idx)
-#     return data_np.transpose(tuple(indices))
+        return ''.join(self.dims.keys())
 
 
 def get_axis_len(iter_var):
@@ -235,25 +269,6 @@ def relay_micro_build(func, dev_config, target, params=None, lib_headers=None, l
     return mod
 
 
-def eval_relay_intrp(mod, args):
-    main_gv = relay.GlobalVar('main')
-    mod = relay.Module({main_gv: mod['main']})
-    intrp = create_executor("debug", mod)
-    f = intrp.evaluate(main_gv)
-    return f(*args).data.asnumpy()
-
-
-def eval_cpu_graph_runtime(mod, params, input_dict):
-    graph, op_mod, params = relay.build(mod['main'], target="llvm", params=params)
-    if DEBUG_MODE:
-        graph_mod = debug_runtime.create(graph, op_mod, tvm.cpu(0), dump_root='/home/lweber/microtvm-blogpost-eval/debug/cpu')
-    else:
-        graph_mod = graph_runtime.create(graph, op_mod, tvm.cpu(0))
-    graph_mod.set_input(**params)
-    graph_mod.run(**input_dict)
-    return graph_mod.get_output(0).asnumpy()
-
-
 def gen_workload_desc_from_task(task):
     if 'conv2d' not in task[1]:
         return None
@@ -306,13 +321,16 @@ def custom_pick_best(in_log_file_name, out_log_file_name, top_k=1):
                 f.write(json.dumps(entry) + '\n')
 
 
+if 'MICRO_GDB_INIT_DIR' in os.environ:
+    MICRO_GDB_DEBUG_PATH = os.environ['MICRO_GDB_INIT_DIR']
+else:
+    MICRO_GDB_DEBUG_PATH = os.environ['MICRO_GDB_INIT_DIR'] = f'{get_repo_root()}/debug/micro'
+
+
 def reset_gdbinit(dev_config):
     if 'server_port' not in dev_config:
         return
-    if 'MICRO_GDB_INIT_DIR' not in os.environ:
-        print('WARNING: `MICRO_GDB_INIT_DIR` not set. GDB debugging will not be smooth, yo.')
-        return
-    gdb_init_dir = os.environ['MICRO_GDB_INIT_DIR']
+    gdb_init_dir = MICRO_GDB_DEBUG_PATH
     with open(f'{gdb_init_dir}/.gdbinit', 'w') as f:
         gdb_port = dev_config['server_port'] - 3333
         gdbinit_contents = (
@@ -390,9 +408,9 @@ class MockCMod:
 
 
 def check_conv2d_output(
-        data_nt: NamedTensor, kernel_nt: NamedTensor, micro_output_nt: NamedTensor,
-        strides, padding):
-    data_nchw_np = data_nt.with_layout('NCHW').data
+        data_tensor: LabelledTensor, kernel_tensor: LabelledTensor,
+        micro_output_tensor: Labelled_Tensor, strides, padding):
+    data_nchw_np = data_tensor.with_layout('NCHW').data
     kernel_oihw_np = kernel_nt.with_layout('OIHW').data
     micro_output_nchw_np = micro_output_nt.with_layout('NCHW').data
 
