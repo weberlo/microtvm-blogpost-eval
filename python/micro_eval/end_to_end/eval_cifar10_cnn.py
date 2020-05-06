@@ -6,6 +6,7 @@ import os
 import sys
 import warnings
 
+import colorama
 import mxnet as mx
 import mxnet.ndarray as nd
 from mxnet import nd, autograd, gluon
@@ -16,6 +17,7 @@ import tvm
 from tvm import autotvm
 from tvm.autotvm.task.space import FallbackConfigEntity
 from tvm.contrib import graph_runtime, util
+from tvm.contrib.debugger import debug_runtime
 from tvm import relay
 from tvm import micro
 from tvm import autotvm
@@ -60,7 +62,8 @@ def get_sample_points(n, has_simd_strategy):
             break
         data_np = np.copy(data.as_in_context(ctx).asnumpy())
         # gluon data is in NHWC format
-        data_nt = util.LabelledTensor(data_np, util.LabelledShape(zip('NHWC', data_np.shape), 'uint8'))
+        shape = util.LabelledShape(dim_iter=zip('NHWC', data_np.shape), dtype='uint8')
+        data_nt = util.LabelledTensor(data_np, shape)
 
         label = int(label.asnumpy()[0])
         samples.append({'data': data_nt, 'label': label})
@@ -106,24 +109,28 @@ def eval_interp(args, target, samples):
         ir_mod[main_gv] = mod.mod['main']
         intrp = relay.create_executor("debug", ir_mod)
         f = intrp.evaluate(main_gv)
+        print('compiled', f)
 
     predictions = []
     for i, sample in enumerate(samples):
         data_nt = sample['data']
         if model_util.has_simd_strategy(args.cifar10_conv_op_impl):
-            data_nt = data_nt.resize(C=4)
+            data_nt = data_nt.resize(data_nt.shape.as_template_for(C=4))
 
         data_np = data_nt.with_layout(mod.data_layout).data
         label = sample['label']
         result = f(data_np, *[mod.params[param.name_hint] for param in mod.mod['main'].params[1:]])
-        predictions.append(result.data.asnumpy())
+        predictions.append(result.asnumpy()[0])
+        print('got prediction', predictions[-1])
+
+    return predictions
 
 
 def eval_cpu(args, target, samples):
     mod = model_util.build_relay_mod(args.cifar10_conv_op_impl, 'x86',
                                      use_random_params=not args.validate_against)
     with relay.build_config(opt_level=3, disabled_pass={"AlterOpLayout"}):
-        graph, op_mod, params = relay.build(mod['main'], target="llvm", params=params)
+        graph, op_mod, params = relay.build(mod.mod['main'], target="llvm", params=mod.params)
         if util.DEBUG_MODE:
             graph_mod = debug_runtime.create(graph, op_mod, tvm.cpu(0), dump_root=f'{util.get_repo_root()}/debug/cpu')
         else:
@@ -133,8 +140,18 @@ def eval_cpu(args, target, samples):
 
     predictions = []
     for i, sample in enumerate(samples):
-        result = graph_mod.run({'data': sample['data'].data})
-        predictions.append(result.getoutput(0).asnumpy())
+        data_nt = sample['data']
+        if model_util.has_simd_strategy(args.cifar10_conv_op_impl):
+            data_nt = data_nt.resize(data_nt.shape.as_template_for(C=4))
+#        assert data_np.shape == DATA_SHAPE
+#        assert data_np.dtype == IN_DTYPE
+        data_tvm = tvm.nd.array(data_nt.data, ctx=tvm.cpu(0))
+        print(data_nt.shape)
+        graph_mod.set_input('data', data_tvm)
+#        print('built', graph_mod.astext())
+        graph_mod.run()
+        predictions.append(graph_mod.get_output(0).asnumpy()[0])
+        print('got prediction', predictions[-1])
 
     return predictions
 
@@ -241,10 +258,13 @@ def eval_utvm(args, target, samples):
             LOGGER.info('[[Micro Tuned]]')
         else:
             LOGGER.info('[[Micro Untuned]]')
+
+        predictions = []
         for i, sample in enumerate(samples):
             LOGGER.info(f'[Sample {i}]')
+            data_nt = sample['data']
             if mod.has_simd_strategy:
-                data_nt = data_nt.resize(C=4)
+                data_nt = data_nt.resize(data_nt.shape.as_template_for(C=4))
             data_np = data_nt.with_layout(mod.data_layout).data
             label = sample['label']
 
@@ -261,12 +281,15 @@ def eval_utvm(args, target, samples):
             LOGGER.info(f'  model execution took {exec_time} milliseconds')
 
             # get output
-            micro_output_np = graph_mod.get_output(0).asnumpy()
+            micro_output_np = graph_mod.get_output(0).asnumpy()[0]
             LOGGER.info(f'  output: {micro_output_np}')
-            prediction = CIFAR10_CLASSES[np.argmax(micro_output_np)]
-            label = CIFAR10_CLASSES[label]
+            prediction = cifar10_cnn.CIFAR10_CLASSES[np.argmax(micro_output_np)]
+            label = cifar10_cnn.CIFAR10_CLASSES[label]
             LOGGER.info(f'  prediction was {prediction}')
             LOGGER.info(f'  actual was {label}')
+            predictions.append(micro_output_np)
+
+        return predictions
 
 
 def load_outputs(path):
@@ -300,7 +323,7 @@ ALL_MODELS = ['cmsis', 'utvm', 'interp', 'cpu']
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('models', choices=ALL_MODELS, nargs='+', help='models to evaluate')
-    parser.add_argument('--use-tuned-schedule', nargs='?', default='arm.stm32f746xx.e2e.log',
+    parser.add_argument('--use-tuned-schedule', nargs='?', const='arm.stm32f746xx.e2e.log',
                         help=('Use a tuned schedule in evaluating the micro model. The path to the '
                               'tuned log can be given; if not, the default symlink generated by '
                               'tune_relay_microtvm.py is used.'))
@@ -327,16 +350,42 @@ def main():
     samples = get_sample_points(args.num_samples, model_util.has_simd_strategy(args.cifar10_conv_op_impl))
 
     results = {}
-    to_run = args.models
+    to_run = list(args.models)
     if args.validate_against and args.validate_against not in to_run:
         to_run.append(args.validate_against)
-    for model_name in args.models:
+    for model_name in to_run:
         results[model_name] = globals()[f'eval_{model_name}'](args, target, samples)
 
-    if args.validate:
-        for model_name in to_run:
-            print('{} vs {}: allclose? {:s}'.format(
-                model_name, args.validate, np.allclose(results[model_name].astype('float32'), results[args.validate].astype('float32'))))
+    if args.validate_against:
+        for i in range(args.num_samples):
+            allclose = {}
+            for model_name in args.models:
+                allclose[model_name] = np.allclose(
+                    results[model_name][i].astype('float32'),
+                    results[args.validate_against][i].astype('float32'))
+
+            print(f'Sample {i} ---->')
+            rows = []
+            rows.append(['class ->', ''] + list(range(10))) #[str(x) for x in range(10)])
+            for model_name in args.models:
+                color = ''
+                if model_name != args.validate_against:
+                    if not allclose[model_name]:
+                        color = f'{colorama.Fore.RED}'
+                    else:
+                        color = colorama.Fore.GREEN
+
+                rows.append([model_name, color] + list(results[model_name][i]))
+            rows.append([args.validate_against, ''] + results[args.validate_against][i].tolist())
+
+            spacing = max(len(r[0]) for r in rows)
+            format_string = f'{{0:{spacing}s}}'
+            print('fmt', format_string)
+            print(format_string.format(rows[0][0]) + ''.join(['{0:5d}'.format(c) for c in rows[0][2:]]))
+            format_string = f'{{0:{spacing}s}}'
+            for r in rows[1:]:
+                print(r[1] + format_string.format(r[0]) + colorama.Style.RESET_ALL + ''.join([' {0:+04d}'.format(y) for y in r[2:]]))
+
 
     if args.debug_runtime:
         micro_outputs = load_outputs(f'{util.MICRO_GDB_DEBUG_PATH}/_tvmdbg_ctx_MICRO_DEV_0/output_tensors.params')

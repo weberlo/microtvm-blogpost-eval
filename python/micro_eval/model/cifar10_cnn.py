@@ -1,3 +1,4 @@
+import collections
 import json
 import numpy as np
 
@@ -44,15 +45,15 @@ def _gen_random_params(mod, param_shapes):
 
 
 _CMSIS_PARAM_SHAPES = {
-    'mean_data': util.LabelledShape.from_ordered_kwargs(N=1, H=32, W=32, C=3, dtype='uint8'),
-    'conv0_weight': util.LabelledShape.from_ordered_kwargs(O=32, I=3, H=5, W=5, dtype='int8'),
-    'conv0_bias': util.LabelledShape.from_ordered_kwargs(B=32, dtype='int8'),
-    'conv1_weight': util.LabelledShape.from_ordered_kwargs(O=32, I=3, H=5, W=5, dtype='int8'),
-    'conv1_bias': util.LabelledShape.from_ordered_kwargs(B=32, dtype='int8'),
-    'conv2_weight': util.LabelledShape.from_ordered_kwargs(O=32, I=3, H=5, W=5, dtype='int8'),
-    'conv2_bias': util.LabelledShape.from_ordered_kwargs(B=32, dtype='int8'),
-    'dense0_weight': util.LabelledShape.from_ordered_kwargs(O=10, I=1024, dtype='int8'),
-    'dense0_bias': util.LabelledShape.from_ordered_kwargs(O=10, dtype='int8'),
+    'mean_data': util.LabelledShape(N=1, H=32, W=32, C=3, dtype='uint8'),
+    'conv0_weight': util.LabelledShape(O=32, I=3, H=5, W=5, dtype='int8'),
+    'conv0_bias': util.LabelledShape(B=32, dtype='int8'),
+    'conv1_weight': util.LabelledShape(O=32, I=32, H=5, W=5, dtype='int8'),
+    'conv1_bias': util.LabelledShape(B=32, dtype='int8'),
+    'conv2_weight': util.LabelledShape(O=64, I=32, H=5, W=5, dtype='int8'),
+    'conv2_bias': util.LabelledShape(B=64, dtype='int8'),
+    'dense0_weight': util.LabelledShape(O=10, I=1024, dtype='int8'),
+    'dense0_bias': util.LabelledShape(B=10, dtype='int8'),
 }
 
 
@@ -63,8 +64,9 @@ def _load_cmsis_params(mod, param_shapes):
     params = {}
     for formal_param in mod['main'].params[1:]:  # exclude data
         name = formal_param.name_hint
+        print('name', name, _CMSIS_PARAM_SHAPES[name].dtype, len(cmsis_params[name]))
         cmsis_tensor = util.LabelledTensor(
-            data=np.array(cmsis_params[name]).asdtype(_CSMIS_PARAM_SHAPES[name].dtype),
+            data=np.array(cmsis_params[name], dtype=_CMSIS_PARAM_SHAPES[name].dtype, copy=True).reshape(_CMSIS_PARAM_SHAPES[name].shape),
             shape=_CMSIS_PARAM_SHAPES[name])
 
         param_shape = param_shapes[name]
@@ -73,8 +75,8 @@ def _load_cmsis_params(mod, param_shapes):
             dtype=param_shape.dtype)
 
         assert param_shape.dims == relay_shape.dims
-        param = cmsis_tensor.reshape(param_shape)
-        params[name] = tvm.nd.array(relay_np, tvm.cpu(0))
+        param = cmsis_tensor.resize(param_shape)
+        params[name] = tvm.nd.array(param.data, tvm.cpu(0))
 
     return params
 
@@ -88,30 +90,32 @@ def gen_cifar10_cnn(data_layout, kernel_layouts, op_strategy='direct', use_rando
     # TODO discrepancies between outputs might be a result of the bias_add op
     # not matching the semantics of the CMSIS bias add.
 
-    data_shape = util.LabelledShape.from_ordered_dict(N=1, C=3, H=32, W=32, dtype='uint8')
-    conv0_weight_shape = util.LabelledShape.from_ordered_dict(O=32, I=3, H=5, W=5, dtype='int8')
+    data_shape = util.LabelledShape.from_dims_and_layout(dict(N=1, C=3, H=32, W=32), data_layout, dtype='uint8')
+    conv0_weight_shape = util.LabelledShape.from_dims_and_layout(dict(H=5, W=5, I=3, O=32), kernel_layouts[0], dtype='int8')
     if op_strategy in ('direct_simd', 'partial_im2col'):
         # to fit our SIMD intrinsic, we make the 'C' dimension a multiple of 4
-        data_shape = util.LabelledShape.from_ordered_dict(N=1, C=4, H=32, W=32, dtype='uint8')
-        conv0_weight_shape = util.LabelledShape.from_ordered_dict(O=32, I=4, H=5, W=5, dtype='int8')
+        data_shape = util.LabelledShape.from_dims_and_layout(dict(N=1, C=4, H=32, W=32), data_layout, dtype='uint8')
+        conv0_weight_shape = util.LabelledShape.from_dims_and_layout(dict(H=5, W=5, O=32, I=4), kernel_layouts[0], dtype='int8')
+    print('conv0_weight_shape', conv0_weight_shape)
 
     param_shapes = collections.OrderedDict([
         ('data', data_shape),
         ('mean_data', data_shape),
         ('conv0_weight', conv0_weight_shape),
-        ('conv0_bias', util.LabelledShape.from_ordered_dict(B=32, dtype='int8')),
-        ('conv1_weight', util.LabelledShape.from_dims_and_layout(dict(O=32, I=32, H=5, W=5), layout=kernel_layouts[1])),
-        ('conv1_bias', util.LabelledShape.from_ordered_dict(B=32, dtype='int8')),
-        ('conv2_weight', util.LabelledShape.from_dims_and_layout(dict(O=64, I=32, H=5, W=5), layout=kernel_layouts[2])),
-        ('conv1_bias', util.LabelledShape.from_ordered_dict(B=64, dtype='int8')),
-        ('dense0_weight', util.LabelledShape.from_ordered_dict(O=10, I=1024, dtype='int8')),
-        ('dense0_bias', util.LabelledShape.from_ordered_dict(B=10, dtype='int8')),
+        ('conv0_bias', util.LabelledShape(B=32, dtype='int8')),
+        ('conv1_weight', util.LabelledShape.from_dims_and_layout(dict(O=32, I=32, H=5, W=5), kernel_layouts[1], dtype='int8')),
+        ('conv1_bias', util.LabelledShape(B=32, dtype='int8')),
+        ('conv2_weight', util.LabelledShape.from_dims_and_layout(dict(O=64, I=32, H=5, W=5), kernel_layouts[2], dtype='int8')),
+        ('conv2_bias', util.LabelledShape(B=64, dtype='int8')),
+        ('dense0_weight', util.LabelledShape(O=10, I=1024, dtype='int8')),
+        ('dense0_bias', util.LabelledShape(B=10, dtype='int8')),
     ])
     bias_add_axis = data_layout.index('C')
     params = []
     for p, s in param_shapes.items():
-        params.append(f'        %{p}: Tensor[{s.shape}, {s.dtype}]')
-    param_args = params.join(',\n')
+        joined_shape = ', '.join(str(x) for x in s.shape)
+        params.append(f'        %{p}: Tensor[({joined_shape}), {s.dtype}]')
+    param_args = ',\n'.join(params)
     print('params', param_args)
     mod = relay.fromtext(f"""
     v0.0.4
@@ -148,13 +152,13 @@ def gen_cifar10_cnn(data_layout, kernel_layouts, op_strategy='direct', use_rando
       %9 = right_shift(%8, 9);
       %10 = cast(%9, "int8");
       %11 = nn.relu(%10);
-      %12 = nn.avg_pool2d(%11,
+      %12 = nn.avg_pool2d(cast(%11, "int32"),
               pool_size=[3, 3],
               strides=[2, 2],
               count_include_pad=True,
               layout="{data_layout}",
               ceil_mode=True);
-      %13 = nn.conv2d(%12,
+      %13 = nn.conv2d(cast(%12, "int8"),
               %conv2_weight,
               padding=[2, 2],
               channels=64,
@@ -166,7 +170,7 @@ def gen_cifar10_cnn(data_layout, kernel_layouts, op_strategy='direct', use_rando
       %15 = right_shift(%14, 9);
       %16 = cast(%15, "int8");
       %17 = nn.relu(%16);
-      %18 = nn.avg_pool2d(%17,
+      %18 = nn.avg_pool2d(cast(%17, "int32"),
               pool_size=[3, 3],
               strides=[2, 2],
               count_include_pad=True,
@@ -179,6 +183,7 @@ def gen_cifar10_cnn(data_layout, kernel_layouts, op_strategy='direct', use_rando
       cast(%22, "int8")
     }}
     """)
+    print('mod', mod.astext())
     if use_random_params:
         params = _gen_random_params(mod, data_layout, kernel_layouts)
     else:

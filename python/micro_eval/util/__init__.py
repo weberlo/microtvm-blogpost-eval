@@ -85,14 +85,35 @@ class LabelledTensor:
         """
         self.data = data
         self.shape = shape
+        assert isinstance(shape, LabelledShape)
+
+    def resize(self, other: LabelledShape):
+        """Resize dimensions (per numpy.resize) and potentially transpose.
+
+        Parameters
+        ----------
+        other : LabelledShape
+            The new shape to take on. Per numpy.transpose, newly-created tensor entries will be
+            0-padded.
+
+        Returns
+        -------
+        LabelledTensor : The resized tensor.
+        """
+        assert other.dtype == self.shape.dtype
+        intermediate_shape = LabelledShape.from_dims_and_layout(self.shape, other.layout, dtype=self.shape.dtype)
+        intermediate = self.transpose(intermediate_shape)
+        return LabelledTensor(np.resize(intermediate.data, other.shape), other)
 
     def transpose(self, other: LabelledShape):
         mapping = self.shape.make_transpose_mapping(other)
-        return LabelledTensor(np.transpose(data, mapping), shape)
+        print('mapping', mapping)
+        print('arr', self.data.shape)
+        return LabelledTensor(np.transpose(self.data, mapping), other)
 
     def with_layout(self, layout):
         new_shape_dims = OrderedDict([(l, self.shape.dims[l]) for l in layout])
-        return self.transpose(LabelledShape(new_shape_dims, self.shape.dtype))
+        return self.transpose(LabelledShape(dims=new_shape_dims, dtype=self.shape.dtype))
 
 
 # class :
@@ -128,9 +149,9 @@ class LabelledTensor:
 
 class LabelledShape:
 
-#    @classmethod
-#    def from_dims_and_layout(cls, dims: typing.Dict[str, int], layout: str, dtype: str):
-#        return cls(((l, dims[l]) for l in layout), dtype)
+    @classmethod
+    def from_dims_and_layout(cls, dims: typing.Dict[str, int], layout: str, dtype: str):
+        return cls(dim_iter=((l, dims[l]) for l in layout), dtype=dtype)
 
 #    @classmethod
 #    def from_ordered_kwargs(cls, dtype: str=None, **kw):
@@ -142,7 +163,7 @@ class LabelledShape:
                  dtype: str = None,
                  **kw):
         if dims is not None:
-            self.dims = OrderedDict(dim_iter)
+            self.dims = OrderedDict(dims)
         elif dim_iter is not None:
             self.dims = OrderedDict(list(dim_iter))
         else:
@@ -150,9 +171,12 @@ class LabelledShape:
 
         self.dtype = dtype
 
+    def __getitem__(self, k):
+        return self.dims[k]
+
     def __repr__(self):
         dims = ', '.join(f'{k}={v}' for k, v in self.dims.items())
-        return f'{self.__class__.__name__}(dtype={self.dtype:r}, {dims})'
+        return f'{self.__class__.__name__}(dtype={self.dtype!r}, {dims})'
 
     def serialize(self):
         """Serialize to an AutoTVM style spec (e.g., `('TENSOR', (1, 2, 3), 'int8')`)."""
@@ -171,6 +195,7 @@ class LabelledShape:
     def gen_zero_tensor(self) -> LabelledTensor:
         return LabelledTensor(np.zeros(self.shape, dtype=self.dtype), self.layout)
 
+    @property
     def size(self):
         prod = 1
         for x in self.dims.values():
@@ -178,7 +203,7 @@ class LabelledShape:
         return prod
 
     def make_transpose_mapping(self, other: LabelledShape):
-        print('transpose', self, other)
+        print('transpose', self, self.size, other, other.size)
         assert self.size == other.size
         assert len(self.dims) == len(other.dims)
 
@@ -193,8 +218,8 @@ class LabelledShape:
         return indices
 
     def as_template_for(self, **new_dims):
-        return LabelledShape(((k, new_dims.get(k, self.dims[k])) for k in self.dims.keys()),
-                             self._dtype)
+        return LabelledShape(dims=((k, new_dims.get(k, self.dims[k])) for k in self.dims.keys()),
+                             dtype=self.dtype)
 
     @property
     def shape(self):
