@@ -46,11 +46,11 @@ def _gen_random_params(mod, param_shapes):
 
 _CMSIS_PARAM_SHAPES = {
     'mean_data': util.LabelledShape(N=1, H=32, W=32, C=3, dtype='uint8'),
-    'conv0_weight': util.LabelledShape(O=32, I=3, H=5, W=5, dtype='int8'),
+    'conv0_weight': util.LabelledShape(O=32, H=5, W=5, I=3, dtype='int8'),
     'conv0_bias': util.LabelledShape(B=32, dtype='int8'),
-    'conv1_weight': util.LabelledShape(O=32, I=32, H=5, W=5, dtype='int8'),
+    'conv1_weight': util.LabelledShape(O=32, H=5, W=5, I=32, dtype='int8'),
     'conv1_bias': util.LabelledShape(B=32, dtype='int8'),
-    'conv2_weight': util.LabelledShape(O=64, I=32, H=5, W=5, dtype='int8'),
+    'conv2_weight': util.LabelledShape(O=64, H=5, W=5, I=32, dtype='int8'),
     'conv2_bias': util.LabelledShape(B=64, dtype='int8'),
     'dense0_weight': util.LabelledShape(O=10, I=1024, dtype='int8'),
     'dense0_bias': util.LabelledShape(B=10, dtype='int8'),
@@ -96,6 +96,7 @@ def gen_cifar10_cnn(data_layout, kernel_layouts, op_strategy='direct', use_rando
         # to fit our SIMD intrinsic, we make the 'C' dimension a multiple of 4
         data_shape = util.LabelledShape.from_dims_and_layout(dict(N=1, C=4, H=32, W=32), data_layout, dtype='uint8')
         conv0_weight_shape = util.LabelledShape.from_dims_and_layout(dict(H=5, W=5, O=32, I=4), kernel_layouts[0], dtype='int8')
+    print('data_shape', data_shape)
     print('conv0_weight_shape', conv0_weight_shape)
 
     param_shapes = collections.OrderedDict([
@@ -120,8 +121,8 @@ def gen_cifar10_cnn(data_layout, kernel_layouts, op_strategy='direct', use_rando
     mod = relay.fromtext(f"""
     v0.0.4
     def @main({param_args}) {{
-      %0 = cast(cast(%data, "int16") - cast(%mean_data, "int16"), "int8");
-      %1 = nn.conv2d(
+        %0 = cast(cast(%data, "int16") - cast(%mean_data, "int16"), "int8");
+        %1 = nn.conv2d(
              %0,
              %conv0_weight,
              padding=[2, 2],

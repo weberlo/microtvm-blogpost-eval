@@ -1,7 +1,7 @@
-layout src
+#layout src
 target remote localhost:3333
-add-symbol-file tmp_cot36c5.obj
-add-symbol-file tmpf32g2cfg.obj
+add-symbol-file 00011.obj
+add-symbol-file 00002.obj
 set $pc = UTVMInit
 break UTVMDone
 

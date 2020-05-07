@@ -24,7 +24,7 @@ static q7_t ip1_bias[IP1_OUT_DIM] = IP1_BIAS;
 
 void mean_subtract(q7_t* image_data) {
   for(int i=0; i<DATA_OUT_CH*DATA_OUT_DIM*DATA_OUT_DIM; i++) {
-    image_data[i] = (q7_t)__SSAT( ((int)(image_data[i] - mean[i]) >> DATA_RSHIFT), 8);
+    image_data[i] = (q7_t)__SSAT( ((int)(*((uint8_t*)&image_data[i]) - mean[i]) >> DATA_RSHIFT), 8);
   }
 }
 
@@ -69,16 +69,13 @@ int32_t run_nn(q7_t* input_data, q7_t* output_data) {
 }
 
 int32_t arm_cifar10_cnn_wrapper(TVMValue* arg_values, int* arg_type_codes, int32_t num_args) {
-  void* data_handle = (((TVMValue*)arg_values)[0].v_handle);
-  void* output_handle = (((TVMValue*)arg_values)[1].v_handle);
+  DLTensor* data_tensor = (DLTensor*) arg_values[0].v_handle;
+  DLTensor* output_tensor = (DLTensor*) arg_values[1].v_handle;
 
-  //int32_t dev_type = (((DLTensor*)data_handle)[0].ctx.device_type);
-  //int32_t dev_id = (((DLTensor*)data_handle)[0].ctx.device_id);
-
-  int8_t* data = (int8_t*)(((DLTensor*)data_handle)[0].data);
+  int8_t* data = (int8_t*) data_tensor->data;
   //int64_t* data_shape = (int64_t*)(((DLTensor*)data_handle)[0].shape);
   //int64_t* data_strides = (int64_t*)(((DLTensor*)data_handle)[0].strides);
-  int8_t* output = (int8_t*)(((DLTensor*)output_handle)[0].data);
+  int8_t* output = (int8_t*) output_tensor->data;
   //int64_t* output_shape = (int64_t*)(((DLTensor*)output_handle)[0].shape);
   //int64_t* output_strides = (int64_t*)(((DLTensor*)output_handle)[0].strides);
   return run_nn(data, output);

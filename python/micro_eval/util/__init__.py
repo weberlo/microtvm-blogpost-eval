@@ -190,10 +190,10 @@ class LabelledShape:
         else:
             assert False, 'unknown dtype'
 
-        return LabelledTensor(data_np, self.layout)
+        return LabelledTensor(data_np, self)
 
     def gen_zero_tensor(self) -> LabelledTensor:
-        return LabelledTensor(np.zeros(self.shape, dtype=self.dtype), self.layout)
+        return LabelledTensor(np.zeros(self.shape, dtype=self.dtype), self)
 
     @property
     def size(self):
@@ -202,8 +202,11 @@ class LabelledShape:
             prod *= x
         return prod
 
+    def with_layout(self, layout):
+        assert len(self.dims) == len(layout)
+        return LabelledShape(dim_iter=((l, self.dims[l]) for l in layout), dtype=self.dtype)
+
     def make_transpose_mapping(self, other: LabelledShape):
-        print('transpose', self, self.size, other, other.size)
         assert self.size == other.size
         assert len(self.dims) == len(other.dims)
 
@@ -359,7 +362,7 @@ def reset_gdbinit(dev_config):
     with open(f'{gdb_init_dir}/.gdbinit', 'w') as f:
         gdb_port = dev_config['server_port'] - 3333
         gdbinit_contents = (
-f"""layout src
+f"""#layout src
 target remote localhost:{gdb_port}
 set $pc = UTVMInit
 break UTVMDone
@@ -412,7 +415,7 @@ def get_comm_overhead(dev_config, num_trials=1):
     return sum(results) / len(results)
 
 
-def benchmark_micro_func(sess, micro_func, args, num_trials, time_overhead):
+def benchmark_micro_func(sess, micro_func, args, num_trials):
     ctx = tvm.micro_dev(0)
     # sync before and after to ensure these are the only tasks in the queue
     ctx.sync()
@@ -420,7 +423,7 @@ def benchmark_micro_func(sess, micro_func, args, num_trials, time_overhead):
     for _ in range(num_trials):
         micro_func(*args)
     ctx.sync()
-    return (sess.get_last_batch_time() / num_trials) - time_overhead
+    return (sess.get_last_batch_time() / num_trials)
 
 
 class MockCMod:
@@ -436,11 +439,14 @@ def check_conv2d_output(
         data_tensor: LabelledTensor, kernel_tensor: LabelledTensor,
         micro_output_tensor: Labelled_Tensor, strides, padding):
     data_nchw_np = data_tensor.with_layout('NCHW').data
-    kernel_oihw_np = kernel_nt.with_layout('OIHW').data
-    micro_output_nchw_np = micro_output_nt.with_layout('NCHW').data
+    kernel_oihw_np = kernel_tensor.with_layout('OIHW').data
+    micro_output_nchw_np = micro_output_tensor.with_layout('NCHW').data
 
     topi_output_np = conv2d_nchw_python(data_nchw_np, kernel_oihw_np, strides, padding)
-    tvm.testing.assert_allclose(micro_output_nchw_np, topi_output_np)
+    tvm.testing.assert_allclose(micro_output_nchw_np.shape, topi_output_np.shape)
+    for i in range(micro_output_nchw_np.shape[0]):
+        tvm.testing.assert_allclose(micro_output_nchw_np[i], topi_output_np[i])
+        print('ok', micro_output_nchw_np[i])
 
 
 def calc_param_mem_footprint(func, units='KB'):
