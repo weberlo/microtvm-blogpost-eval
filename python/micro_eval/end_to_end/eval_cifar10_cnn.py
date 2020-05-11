@@ -17,7 +17,7 @@ import tvm
 from tvm import autotvm
 from tvm.autotvm.task.space import FallbackConfigEntity
 from tvm.contrib import graph_runtime, util
-from tvm.contrib.debugger import debug_runtime
+from tvm.contrib.debugger import debug_runtime, debug_result
 from tvm import relay
 from tvm import micro
 from tvm import autotvm
@@ -53,8 +53,8 @@ def get_sample_points(n, has_simd_strategy):
     # Load a random image from the test dataset
     sample_data = mx.gluon.data.DataLoader(
             mx.gluon.data.vision.CIFAR10(train=False),
-            1,
-            shuffle=True)
+            1)#,
+#            shuffle=True)
 
     samples = []
     for i, (data, label) in zip(range(n), sample_data):
@@ -71,32 +71,39 @@ def get_sample_points(n, has_simd_strategy):
 
 
 # CMSIS config
-CIFAR10_SRC_PATH = f'{util.get_repo_root()}/cmsis_src/cmsis_cifar10_cnn/cmsis_cifar10_cnn.c'
+CIFAR10_SRC_PATH = f'{util.get_repo_root()}/cmsis_src/cmsis_cifar10_cnn/cmsis_cifar10_cnn_tfl.c'
 CIFAR10_INCLUDE_PATH = f'{util.get_repo_root()}/cmsis_src/cmsis_cifar10_cnn'
 CMSIS_SRC_PATHS = [
     f'{util.CMSIS_NN_PATH}/CMSIS/NN/Source/ActivationFunctions/arm_relu_q7.c',
+    f'{util.CMSIS_NN_PATH}/CMSIS/NN/Source/ConvolutionFunctions/arm_convolve_s8.c',
     f'{util.CMSIS_NN_PATH}/CMSIS/NN/Source/ConvolutionFunctions/arm_convolve_HWC_q7_RGB.c',
     f'{util.CMSIS_NN_PATH}/CMSIS/NN/Source/ConvolutionFunctions/arm_convolve_HWC_q7_fast.c',
     f'{util.CMSIS_NN_PATH}/CMSIS/NN/Source/ConvolutionFunctions/arm_nn_mat_mult_kernel_q7_q15_reordered.c',
     f'{util.CMSIS_NN_PATH}/CMSIS/NN/Source/ConvolutionFunctions/arm_nn_mat_mult_kernel_q7_q15.c',
+    f'{util.CMSIS_NN_PATH}/CMSIS/NN/Source/ConvolutionFunctions/arm_nn_mat_mult_kernel_s8_s16.c',
     f'{util.CMSIS_NN_PATH}/CMSIS/NN/Source/FullyConnectedFunctions/arm_fully_connected_q7_opt.c',
-    f'{util.CMSIS_NN_PATH}/CMSIS/NN/Source/NNSupportFunctions/arm_q7_to_q15_reordered_no_shift.c',
+    f'{util.CMSIS_NN_PATH}/CMSIS/NN/Source/FullyConnectedFunctions/arm_fully_connected_s8.c',
+    f'{util.CMSIS_NN_PATH}/CMSIS/NN/Source/NNSupportFunctions/arm_nn_vec_mat_mult_t_s8.c',
     f'{util.CMSIS_NN_PATH}/CMSIS/NN/Source/NNSupportFunctions/arm_q7_to_q15_no_shift.c',
+    f'{util.CMSIS_NN_PATH}/CMSIS/NN/Source/NNSupportFunctions/arm_q7_to_q15_reordered_no_shift.c',
+    f'{util.CMSIS_NN_PATH}/CMSIS/NN/Source/NNSupportFunctions/arm_q7_to_q15_with_offset.c',
     f'{util.CMSIS_NN_PATH}/CMSIS/NN/Source/PoolingFunctions/arm_pool_q7_HWC.c',
+    f'{util.CMSIS_NN_PATH}/CMSIS/NN/Source/PoolingFunctions/arm_max_pool_s8.c',
+    f'{util.CMSIS_NN_PATH}/CMSIS/NN/Source/PoolingFunctions/arm_avgpool_s8.c',
 ]
 
 
 # CMSIS requires different section spacing than micro.
 CMSIS_SEC_CONTRAINTS = {
-    'text': (25000, MemConstraint.ABSOLUTE_BYTES),
+    'text': (35000, MemConstraint.ABSOLUTE_BYTES),
     'rodata': (4096, MemConstraint.ABSOLUTE_BYTES),
     'data': (100000, MemConstraint.ABSOLUTE_BYTES),
-    'bss': (1024, MemConstraint.ABSOLUTE_BYTES),
+    'bss': (1320, MemConstraint.ABSOLUTE_BYTES),
     'args': (4096, MemConstraint.ABSOLUTE_BYTES),
     'heap': (100.0, MemConstraint.WEIGHT),
-    'workspace': (70000, MemConstraint.ABSOLUTE_BYTES),
+    'workspace': (130000, MemConstraint.ABSOLUTE_BYTES),
     # NOTE we need a deeper stack: since they make deep func calls
-    'stack': (1424, MemConstraint.ABSOLUTE_BYTES),
+    'stack': (1024, MemConstraint.ABSOLUTE_BYTES),
 }
 
 
@@ -129,7 +136,7 @@ def eval_interp(args, target, samples):
 def eval_cpu(args, target, samples):
     mod = model_util.build_relay_mod(args.cifar10_conv_op_impl, 'x86',
                                      use_random_params=not args.validate_against)
-    with relay.build_config(opt_level=3, disabled_pass={"AlterOpLayout"}):
+    with relay.build_config(opt_level=0, disabled_pass={"AlterOpLayout"}):
         graph, op_mod, params = relay.build(mod.mod['main'], target="llvm", params=mod.params)
         if util.DEBUG_MODE:
             graph_mod = debug_runtime.create(graph, op_mod, tvm.cpu(0), dump_root=f'{util.get_repo_root()}/debug/cpu')
@@ -178,11 +185,15 @@ def eval_cmsis(args, target, samples):
             lib_src_paths=CMSIS_SRC_PATHS,
             lib_headers=util.CMSIS_HEADERS,
             lib_include_paths=util.CMSIS_INCLUDE_PATHS + [CIFAR10_INCLUDE_PATH])
-        micro_func = micro_mod['arm_cifar10_cnn_wrapper']
+
+        funcs = collections.OrderedDict([
+            ('cifar10', util.LabelledShape(N=1, H=32, W=32, C=32, dtype='int8')),
+#            ('conv2', util.LabelledShape(N=1, H=16, W=16, C=32, dtype='int8')),
+#            ('conv3', util.LabelledShape(N=10, dtype='int8')),
+#            ('arm_cifar10_cnn_wrapper', util.LabelledShape(N=1, X=10, dtype='int8')),
+#            ('cifar10', util.LabelledShape(N=10, dtype='int8')),
+        ])
         ctx = tvm.micro_dev(0)
-
-        output_tvm = tvm.nd.array(np.zeros(OUTPUT_SHAPE, dtype=OUT_DTYPE), ctx)
-
         results = []
         for i, sample in enumerate(samples):
             LOGGER.info(f'[Sample {i}]')
@@ -192,19 +203,31 @@ def eval_cmsis(args, target, samples):
             data_np = data_nt.with_layout(DATA_LAYOUT).data
             assert data_np.shape == DATA_SHAPE
             assert data_np.dtype == IN_DTYPE
-            data_tvm = tvm.nd.array(data_np, ctx=ctx)
+            last_output_tvm = tvm.nd.array(data_np, ctx=ctx)
 
-            exec_time = util.benchmark_micro_func(sess, micro_func, [data_tvm, output_tvm], 1)
-            LOGGER.info(f'  model execution took {exec_time} milliseconds')
+            outputs = {}
+            for func_name, output_shape in funcs.items():
+                output_nt = output_shape.gen_zero_tensor()
+                output_tvm = tvm.nd.array(output_nt.data, ctx=ctx)
+                exec_time = util.benchmark_micro_func(sess, micro_mod[func_name], [last_output_tvm, output_tvm], 1)
+                LOGGER.info(f'  {func_name} execution took {exec_time} milliseconds')
+                outputs[func_name] = output_tvm.asnumpy()
+                del last_output_tvm
+                last_output_tvm = output_tvm
 
+            with open(f'{util.get_repo_root()}/debug/micro/_tvmdbg_ctx_MICRO_DEV_0/output_tensors.params', 'wb') as params_f:
+                params_f.write(debug_result.save_tensors(outputs))
             cmsis_output_np = output_tvm.asnumpy()
-            LOGGER.info(f'  output: {cmsis_output_np}')
-            prediction = cifar10_cnn.CIFAR10_CLASSES[np.argmax(cmsis_output_np)]
-            label = cifar10_cnn.CIFAR10_CLASSES[label]
-            LOGGER.info(f'  prediction was {prediction}')
-            LOGGER.info(f'  actual was {label}')
+
+            # LOGGER.info(f'  output: {cmsis_output_np}')
+            # prediction = cifar10_cnn.CIFAR10_CLASSES[np.argmax(cmsis_output_np)]
+            # label = cifar10_cnn.CIFAR10_CLASSES[label]
+            # LOGGER.info(f'  prediction was {prediction}')
+            # LOGGER.info(f'  actual was {label}')
 
             results.append(cmsis_output_np)
+            #results.append(np.array([0] * 10))
+
     return results
 
 
@@ -216,7 +239,7 @@ MICRO_SEC_CONSTRAINTS = {
     'bss': (820, MemConstraint.ABSOLUTE_BYTES),
     'args': (4096, MemConstraint.ABSOLUTE_BYTES),
     'heap': (100.0, MemConstraint.WEIGHT),
-    'workspace': (145000, MemConstraint.ABSOLUTE_BYTES),
+    'workspace': (140000, MemConstraint.ABSOLUTE_BYTES),
     'stack': (128, MemConstraint.ABSOLUTE_BYTES),
 }
 
@@ -296,13 +319,14 @@ def load_outputs(path):
         outputs = relay.load_param_dict(f.read())
         res_outputs = {}
         for key, val in outputs.items():
-            key = key[:key.index('_0__')]
-            if key.startswith('fused_nn_'):
-                key = key[len('fused_nn_'):]
-            if key.endswith('_1'):
-                key = key[:-len('_1')]
-            if key.endswith('_2'):
-                key = key[:-len('_2')]
+            if '_0__' in key:
+                key = key[:key.index('_0__')]
+                if key.startswith('fused_nn_'):
+                    key = key[len('fused_nn_'):]
+                if key.endswith('_1'):
+                    key = key[:-len('_1')]
+                if key.endswith('_2'):
+                    key = key[:-len('_2')]
             res_outputs[key] = val.asnumpy()
         return res_outputs
 
@@ -388,7 +412,16 @@ def main():
             format_string = f'{{0:{spacing}s}}'
             for r in rows[1:]:
                 print(r[1] + format_string.format(r[0]) + colorama.Style.RESET_ALL + ''.join([' {0:+04d}'.format(y) for y in r[2:]]))
+            sys.exit(0)
 
+
+    if args.debug_runtime:
+        cpu_outputs = load_outputs(f'{util.get_repo_root()}/debug/cpu/_tvmdbg_ctx_CPU_0/output_tensors.params')
+        save_outputs_json(cpu_outputs, 'cpu_output.json')
+
+        micro_outputs = load_outputs(f'{util.get_repo_root()}/debug/micro/_tvmdbg_ctx_MICRO_DEV_0/output_tensors.params')
+        save_outputs_json(micro_outputs, 'micro_output.json')
+        sys.exit(0)
 
     if args.debug_runtime:
         micro_outputs = load_outputs(f'{util.MICRO_GDB_DEBUG_PATH}/_tvmdbg_ctx_MICRO_DEV_0/output_tensors.params')
@@ -404,11 +437,10 @@ def main():
             input('========================================')
 
     if args.debug_runtime:
-        repo_debug_dir = f'{util.get_repo_root()}/debug/cpu/_tvmdbg_ctx_CPU_0'
-        cpu_outputs = load_outputs(f'{repo_debug_dir}/output_tensors.params')
+        cpu_outputs = load_outputs(f'{util.get_repo_root()}/debug/cpu/_tvmdbg_ctx_CPU_0/output_tensors.params')
         save_outputs_json(cpu_outputs, 'cpu_output.json')
 
-        micro_outputs = load_outputs(f'{repo_debug_dir}/output_tensors.params')
+        micro_outputs = load_outputs(f'{util.get_repo_root()}/debug/micro/_tvmdbg_ctx_MICRO_DEV_0/output_tensors.params')
         save_outputs_json(micro_outputs, 'micro_output.json')
 
         for key in cpu_outputs.keys():

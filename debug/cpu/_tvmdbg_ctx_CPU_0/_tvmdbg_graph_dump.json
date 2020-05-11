@@ -1,1 +1,1599 @@
-"{\n  \"nodes\": [\n    {\n      \"op\": \"null\", \n      \"name\": \"data\", \n      \"inputs\": []\n    }, \n    {\n      \"op\": \"null\", \n      \"name\": \"p0\", \n      \"inputs\": []\n    }, \n    {\n      \"op\": \"tvm_op\", \n      \"name\": \"fused_cast_subtract_cast\", \n      \"attrs\": {\n        \"func_name\": \"fused_cast_subtract_cast\", \n        \"flatten_data\": \"0\", \n        \"num_inputs\": \"2\", \n        \"num_outputs\": \"1\"\n      }, \n      \"inputs\": [\n        [\n          0, \n          0, \n          0\n        ], \n        [\n          1, \n          0, \n          0\n        ]\n      ]\n    }, \n    {\n      \"op\": \"null\", \n      \"name\": \"p1\", \n      \"inputs\": []\n    }, \n    {\n      \"op\": \"null\", \n      \"name\": \"p2\", \n      \"inputs\": []\n    }, \n    {\n      \"op\": \"tvm_op\", \n      \"name\": \"fused_nn_conv2d_add_right_shift_cast\", \n      \"attrs\": {\n        \"func_name\": \"fused_nn_conv2d_add_right_shift_cast\", \n        \"flatten_data\": \"0\", \n        \"num_inputs\": \"3\", \n        \"num_outputs\": \"1\"\n      }, \n      \"inputs\": [\n        [\n          2, \n          0, \n          0\n        ], \n        [\n          3, \n          0, \n          0\n        ], \n        [\n          4, \n          0, \n          0\n        ]\n      ]\n    }, \n    {\n      \"op\": \"tvm_op\", \n      \"name\": \"fused_nn_max_pool2d_nn_relu\", \n      \"attrs\": {\n        \"func_name\": \"fused_nn_max_pool2d_nn_relu\", \n        \"flatten_data\": \"0\", \n        \"num_inputs\": \"1\", \n        \"num_outputs\": \"1\"\n      }, \n      \"inputs\": [\n        [\n          5, \n          0, \n          0\n        ]\n      ]\n    }, \n    {\n      \"op\": \"null\", \n      \"name\": \"p3\", \n      \"inputs\": []\n    }, \n    {\n      \"op\": \"null\", \n      \"name\": \"p4\", \n      \"inputs\": []\n    }, \n    {\n      \"op\": \"tvm_op\", \n      \"name\": \"fused_nn_conv2d_add_right_shift_cast_nn_relu_1\", \n      \"attrs\": {\n        \"func_name\": \"fused_nn_conv2d_add_right_shift_cast_nn_relu_1\", \n        \"flatten_data\": \"0\", \n        \"num_inputs\": \"3\", \n        \"num_outputs\": \"1\"\n      }, \n      \"inputs\": [\n        [\n          6, \n          0, \n          0\n        ], \n        [\n          7, \n          0, \n          0\n        ], \n        [\n          8, \n          0, \n          0\n        ]\n      ]\n    }, \n    {\n      \"op\": \"tvm_op\", \n      \"name\": \"fused_nn_avg_pool2d_1\", \n      \"attrs\": {\n        \"func_name\": \"fused_nn_avg_pool2d_1\", \n        \"flatten_data\": \"0\", \n        \"num_inputs\": \"1\", \n        \"num_outputs\": \"1\"\n      }, \n      \"inputs\": [\n        [\n          9, \n          0, \n          0\n        ]\n      ]\n    }, \n    {\n      \"op\": \"null\", \n      \"name\": \"p5\", \n      \"inputs\": []\n    }, \n    {\n      \"op\": \"null\", \n      \"name\": \"p6\", \n      \"inputs\": []\n    }, \n    {\n      \"op\": \"tvm_op\", \n      \"name\": \"fused_nn_conv2d_add_right_shift_cast_nn_relu\", \n      \"attrs\": {\n        \"func_name\": \"fused_nn_conv2d_add_right_shift_cast_nn_relu\", \n        \"flatten_data\": \"0\", \n        \"num_inputs\": \"3\", \n        \"num_outputs\": \"1\"\n      }, \n      \"inputs\": [\n        [\n          10, \n          0, \n          0\n        ], \n        [\n          11, \n          0, \n          0\n        ], \n        [\n          12, \n          0, \n          0\n        ]\n      ]\n    }, \n    {\n      \"op\": \"tvm_op\", \n      \"name\": \"fused_nn_avg_pool2d\", \n      \"attrs\": {\n        \"func_name\": \"fused_nn_avg_pool2d\", \n        \"flatten_data\": \"0\", \n        \"num_inputs\": \"1\", \n        \"num_outputs\": \"1\"\n      }, \n      \"inputs\": [\n        [\n          13, \n          0, \n          0\n        ]\n      ]\n    }, \n    {\n      \"op\": \"tvm_op\", \n      \"name\": \"fused_nn_batch_flatten\", \n      \"attrs\": {\n        \"func_name\": \"fused_nn_batch_flatten\", \n        \"flatten_data\": \"0\", \n        \"num_inputs\": \"1\", \n        \"num_outputs\": \"1\"\n      }, \n      \"inputs\": [\n        [\n          14, \n          0, \n          0\n        ]\n      ]\n    }, \n    {\n      \"op\": \"null\", \n      \"name\": \"p7\", \n      \"inputs\": []\n    }, \n    {\n      \"op\": \"null\", \n      \"name\": \"p8\", \n      \"inputs\": []\n    }, \n    {\n      \"op\": \"tvm_op\", \n      \"name\": \"fused_nn_dense_add_right_shift_cast\", \n      \"attrs\": {\n        \"func_name\": \"fused_nn_dense_add_right_shift_cast\", \n        \"flatten_data\": \"0\", \n        \"num_inputs\": \"3\", \n        \"num_outputs\": \"1\"\n      }, \n      \"inputs\": [\n        [\n          15, \n          0, \n          0\n        ], \n        [\n          16, \n          0, \n          0\n        ], \n        [\n          17, \n          0, \n          0\n        ]\n      ]\n    }\n  ], \n  \"arg_nodes\": [0, 1, 3, 4, 7, 8, 11, 12, 16, 17], \n  \"heads\": [\n    [\n      18, \n      0, \n      0\n    ]\n  ], \n  \"attrs\": {\n    \"dltype\": [\n      \"list_str\", \n      [\n        \"uint8\", \n        \"int16\", \n        \"int8\", \n        \"int8\", \n        \"int32\", \n        \"int8\", \n        \"int8\", \n        \"int8\", \n        \"int32\", \n        \"int8\", \n        \"int8\", \n        \"int8\", \n        \"int32\", \n        \"int8\", \n        \"int8\", \n        \"int8\", \n        \"int8\", \n        \"int32\", \n        \"int8\"\n      ]\n    ], \n    \"storage_id\": [\n      \"list_int\", \n      [\n        0, \n        1, \n        2, \n        3, \n        4, \n        5, \n        2, \n        6, \n        7, \n        5, \n        2, \n        8, \n        9, \n        5, \n        2, \n        10, \n        11, \n        12, \n        13\n      ]\n    ], \n    \"shape\": [\n      \"list_shape\", \n      [\n        [1, 32, 32, 4], \n        [1, 32, 32, 4], \n        [1, 32, 32, 4], \n        [5, 5, 4, 32], \n        [32], \n        [1, 32, 32, 32], \n        [1, 16, 16, 32], \n        [5, 5, 32, 32], \n        [32], \n        [1, 16, 16, 32], \n        [1, 8, 8, 32], \n        [5, 5, 32, 64], \n        [64], \n        [1, 8, 8, 64], \n        [1, 4, 4, 64], \n        [1, 1024], \n        [10, 1024], \n        [10], \n        [1, 10]\n      ]\n    ]\n  }, \n  \"node_row_ptr\": [\n    0, \n    1, \n    2, \n    3, \n    4, \n    5, \n    6, \n    7, \n    8, \n    9, \n    10, \n    11, \n    12, \n    13, \n    14, \n    15, \n    16, \n    17, \n    18, \n    19\n  ]\n}"
+{
+    "nodes": [
+        {
+            "op": "param",
+            "name": "data",
+            "inputs": [],
+            "attrs": {
+                "T": "type: uint8"
+            },
+            "shape": [
+                1,
+                32,
+                32,
+                3
+            ]
+        },
+        {
+            "op": "fused_cast_15",
+            "name": "fused_cast_15",
+            "attrs": {
+                "func_name": "fused_cast_15",
+                "flatten_data": "0",
+                "num_inputs": "1",
+                "num_outputs": "1",
+                "T": "type: int16"
+            },
+            "inputs": [
+                "data"
+            ],
+            "shape": [
+                1,
+                32,
+                32,
+                3
+            ]
+        },
+        {
+            "op": "param",
+            "name": "p0",
+            "inputs": [],
+            "attrs": {
+                "T": "type: uint8"
+            },
+            "shape": [
+                1,
+                32,
+                32,
+                3
+            ]
+        },
+        {
+            "op": "fused_cast_15",
+            "name": "fused_cast_151",
+            "attrs": {
+                "func_name": "fused_cast_15",
+                "flatten_data": "0",
+                "num_inputs": "1",
+                "num_outputs": "1",
+                "T": "type: int16"
+            },
+            "inputs": [
+                "p0"
+            ],
+            "shape": [
+                1,
+                32,
+                32,
+                3
+            ]
+        },
+        {
+            "op": "fused_subtract",
+            "name": "fused_subtract",
+            "attrs": {
+                "func_name": "fused_subtract",
+                "flatten_data": "0",
+                "num_inputs": "2",
+                "num_outputs": "1",
+                "T": "type: int16"
+            },
+            "inputs": [
+                "fused_cast_15",
+                "fused_cast_151"
+            ],
+            "shape": [
+                1,
+                32,
+                32,
+                3
+            ]
+        },
+        {
+            "op": "fused_cast_14",
+            "name": "fused_cast_14",
+            "attrs": {
+                "func_name": "fused_cast_14",
+                "flatten_data": "0",
+                "num_inputs": "1",
+                "num_outputs": "1",
+                "T": "type: int8"
+            },
+            "inputs": [
+                "fused_subtract"
+            ],
+            "shape": [
+                1,
+                32,
+                32,
+                3
+            ]
+        },
+        {
+            "op": "param",
+            "name": "p1",
+            "inputs": [],
+            "attrs": {
+                "T": "type: int8"
+            },
+            "shape": [
+                5,
+                5,
+                3,
+                32
+            ]
+        },
+        {
+            "op": "fused_nn_conv2d_2",
+            "name": "fused_nn_conv2d_2",
+            "attrs": {
+                "func_name": "fused_nn_conv2d_2",
+                "flatten_data": "0",
+                "num_inputs": "2",
+                "num_outputs": "1",
+                "T": "type: int16"
+            },
+            "inputs": [
+                "fused_cast_14",
+                "p1"
+            ],
+            "shape": [
+                1,
+                32,
+                32,
+                32
+            ]
+        },
+        {
+            "op": "param",
+            "name": "p2",
+            "inputs": [],
+            "attrs": {
+                "T": "type: int8"
+            },
+            "shape": [
+                32
+            ]
+        },
+        {
+            "op": "fused_cast_16",
+            "name": "fused_cast_16",
+            "attrs": {
+                "func_name": "fused_cast_16",
+                "flatten_data": "0",
+                "num_inputs": "1",
+                "num_outputs": "1",
+                "T": "type: int16"
+            },
+            "inputs": [
+                "p2"
+            ],
+            "shape": [
+                32
+            ]
+        },
+        {
+            "op": "fused_nn_bias_add_3",
+            "name": "fused_nn_bias_add_3",
+            "attrs": {
+                "func_name": "fused_nn_bias_add_3",
+                "flatten_data": "0",
+                "num_inputs": "2",
+                "num_outputs": "1",
+                "T": "type: int16"
+            },
+            "inputs": [
+                "fused_nn_conv2d_2",
+                "fused_cast_16"
+            ],
+            "shape": [
+                1,
+                32,
+                32,
+                32
+            ]
+        },
+        {
+            "op": "fused_cast_13",
+            "name": "fused_cast_13",
+            "attrs": {
+                "func_name": "fused_cast_13",
+                "flatten_data": "0",
+                "num_inputs": "1",
+                "num_outputs": "1",
+                "T": "type: int32"
+            },
+            "inputs": [
+                "fused_nn_bias_add_3"
+            ],
+            "shape": [
+                1,
+                32,
+                32,
+                32
+            ]
+        },
+        {
+            "op": "param",
+            "name": "p3",
+            "inputs": [],
+            "attrs": {
+                "T": "type: int32"
+            },
+            "shape": []
+        },
+        {
+            "op": "fused_right_shift_3",
+            "name": "fused_right_shift_3",
+            "attrs": {
+                "func_name": "fused_right_shift_3",
+                "flatten_data": "0",
+                "num_inputs": "2",
+                "num_outputs": "1",
+                "T": "type: int32"
+            },
+            "inputs": [
+                "fused_cast_13",
+                "p3"
+            ],
+            "shape": [
+                1,
+                32,
+                32,
+                32
+            ]
+        },
+        {
+            "op": "fused_cast_12",
+            "name": "fused_cast_12",
+            "attrs": {
+                "func_name": "fused_cast_12",
+                "flatten_data": "0",
+                "num_inputs": "1",
+                "num_outputs": "1",
+                "T": "type: int8"
+            },
+            "inputs": [
+                "fused_right_shift_3"
+            ],
+            "shape": [
+                1,
+                32,
+                32,
+                32
+            ]
+        },
+        {
+            "op": "fused_nn_max_pool2d",
+            "name": "fused_nn_max_pool2d",
+            "attrs": {
+                "func_name": "fused_nn_max_pool2d",
+                "flatten_data": "0",
+                "num_inputs": "1",
+                "num_outputs": "1",
+                "T": "type: int8"
+            },
+            "inputs": [
+                "fused_cast_12"
+            ],
+            "shape": [
+                1,
+                16,
+                16,
+                32
+            ]
+        },
+        {
+            "op": "fused_cast_10",
+            "name": "fused_cast_101",
+            "attrs": {
+                "func_name": "fused_cast_10",
+                "flatten_data": "0",
+                "num_inputs": "1",
+                "num_outputs": "1",
+                "T": "type: int16"
+            },
+            "inputs": [
+                "fused_nn_max_pool2d"
+            ],
+            "shape": [
+                1,
+                16,
+                16,
+                32
+            ]
+        },
+        {
+            "op": "fused_nn_relu_1",
+            "name": "fused_nn_relu_11",
+            "attrs": {
+                "func_name": "fused_nn_relu_1",
+                "flatten_data": "0",
+                "num_inputs": "1",
+                "num_outputs": "1",
+                "T": "type: int16"
+            },
+            "inputs": [
+                "fused_cast_101"
+            ],
+            "shape": [
+                1,
+                16,
+                16,
+                32
+            ]
+        },
+        {
+            "op": "param",
+            "name": "p4",
+            "inputs": [],
+            "attrs": {
+                "T": "type: int8"
+            },
+            "shape": [
+                5,
+                5,
+                32,
+                32
+            ]
+        },
+        {
+            "op": "fused_nn_conv2d_1",
+            "name": "fused_nn_conv2d_1",
+            "attrs": {
+                "func_name": "fused_nn_conv2d_1",
+                "flatten_data": "0",
+                "num_inputs": "2",
+                "num_outputs": "1",
+                "T": "type: int16"
+            },
+            "inputs": [
+                "fused_nn_relu_11",
+                "p4"
+            ],
+            "shape": [
+                1,
+                16,
+                16,
+                32
+            ]
+        },
+        {
+            "op": "param",
+            "name": "p5",
+            "inputs": [],
+            "attrs": {
+                "T": "type: int8"
+            },
+            "shape": [
+                32
+            ]
+        },
+        {
+            "op": "fused_cast_16",
+            "name": "fused_cast_161",
+            "attrs": {
+                "func_name": "fused_cast_16",
+                "flatten_data": "0",
+                "num_inputs": "1",
+                "num_outputs": "1",
+                "T": "type: int16"
+            },
+            "inputs": [
+                "p5"
+            ],
+            "shape": [
+                32
+            ]
+        },
+        {
+            "op": "fused_nn_bias_add_2",
+            "name": "fused_nn_bias_add_2",
+            "attrs": {
+                "func_name": "fused_nn_bias_add_2",
+                "flatten_data": "0",
+                "num_inputs": "2",
+                "num_outputs": "1",
+                "T": "type: int16"
+            },
+            "inputs": [
+                "fused_nn_conv2d_1",
+                "fused_cast_161"
+            ],
+            "shape": [
+                1,
+                16,
+                16,
+                32
+            ]
+        },
+        {
+            "op": "fused_cast_8",
+            "name": "fused_cast_81",
+            "attrs": {
+                "func_name": "fused_cast_8",
+                "flatten_data": "0",
+                "num_inputs": "1",
+                "num_outputs": "1",
+                "T": "type: int32"
+            },
+            "inputs": [
+                "fused_nn_bias_add_2"
+            ],
+            "shape": [
+                1,
+                16,
+                16,
+                32
+            ]
+        },
+        {
+            "op": "param",
+            "name": "p6",
+            "inputs": [],
+            "attrs": {
+                "T": "type: int32"
+            },
+            "shape": []
+        },
+        {
+            "op": "fused_right_shift_2",
+            "name": "fused_right_shift_2",
+            "attrs": {
+                "func_name": "fused_right_shift_2",
+                "flatten_data": "0",
+                "num_inputs": "2",
+                "num_outputs": "1",
+                "T": "type: int32"
+            },
+            "inputs": [
+                "fused_cast_81",
+                "p6"
+            ],
+            "shape": [
+                1,
+                16,
+                16,
+                32
+            ]
+        },
+        {
+            "op": "fused_cast_11",
+            "name": "fused_cast_11",
+            "attrs": {
+                "func_name": "fused_cast_11",
+                "flatten_data": "0",
+                "num_inputs": "1",
+                "num_outputs": "1",
+                "T": "type: int8"
+            },
+            "inputs": [
+                "fused_right_shift_2"
+            ],
+            "shape": [
+                1,
+                16,
+                16,
+                32
+            ]
+        },
+        {
+            "op": "fused_cast_10",
+            "name": "fused_cast_10",
+            "attrs": {
+                "func_name": "fused_cast_10",
+                "flatten_data": "0",
+                "num_inputs": "1",
+                "num_outputs": "1",
+                "T": "type: int16"
+            },
+            "inputs": [
+                "fused_cast_11"
+            ],
+            "shape": [
+                1,
+                16,
+                16,
+                32
+            ]
+        },
+        {
+            "op": "fused_nn_relu_1",
+            "name": "fused_nn_relu_1",
+            "attrs": {
+                "func_name": "fused_nn_relu_1",
+                "flatten_data": "0",
+                "num_inputs": "1",
+                "num_outputs": "1",
+                "T": "type: int16"
+            },
+            "inputs": [
+                "fused_cast_10"
+            ],
+            "shape": [
+                1,
+                16,
+                16,
+                32
+            ]
+        },
+        {
+            "op": "fused_cast_9",
+            "name": "fused_cast_9",
+            "attrs": {
+                "func_name": "fused_cast_9",
+                "flatten_data": "0",
+                "num_inputs": "1",
+                "num_outputs": "1",
+                "T": "type: int16"
+            },
+            "inputs": [
+                "fused_nn_relu_1"
+            ],
+            "shape": [
+                1,
+                16,
+                16,
+                32
+            ]
+        },
+        {
+            "op": "fused_cast_8",
+            "name": "fused_cast_8",
+            "attrs": {
+                "func_name": "fused_cast_8",
+                "flatten_data": "0",
+                "num_inputs": "1",
+                "num_outputs": "1",
+                "T": "type: int32"
+            },
+            "inputs": [
+                "fused_cast_9"
+            ],
+            "shape": [
+                1,
+                16,
+                16,
+                32
+            ]
+        },
+        {
+            "op": "fused_nn_avg_pool2d_1",
+            "name": "fused_nn_avg_pool2d_1",
+            "attrs": {
+                "func_name": "fused_nn_avg_pool2d_1",
+                "flatten_data": "0",
+                "num_inputs": "1",
+                "num_outputs": "1",
+                "T": "type: int32"
+            },
+            "inputs": [
+                "fused_cast_8"
+            ],
+            "shape": [
+                1,
+                8,
+                8,
+                32
+            ]
+        },
+        {
+            "op": "fused_cast_7",
+            "name": "fused_cast_7",
+            "attrs": {
+                "func_name": "fused_cast_7",
+                "flatten_data": "0",
+                "num_inputs": "1",
+                "num_outputs": "1",
+                "T": "type: int8"
+            },
+            "inputs": [
+                "fused_nn_avg_pool2d_1"
+            ],
+            "shape": [
+                1,
+                8,
+                8,
+                32
+            ]
+        },
+        {
+            "op": "param",
+            "name": "p7",
+            "inputs": [],
+            "attrs": {
+                "T": "type: int8"
+            },
+            "shape": [
+                5,
+                5,
+                32,
+                64
+            ]
+        },
+        {
+            "op": "fused_nn_conv2d",
+            "name": "fused_nn_conv2d",
+            "attrs": {
+                "func_name": "fused_nn_conv2d",
+                "flatten_data": "0",
+                "num_inputs": "2",
+                "num_outputs": "1",
+                "T": "type: int16"
+            },
+            "inputs": [
+                "fused_cast_7",
+                "p7"
+            ],
+            "shape": [
+                1,
+                8,
+                8,
+                64
+            ]
+        },
+        {
+            "op": "param",
+            "name": "p8",
+            "inputs": [],
+            "attrs": {
+                "T": "type: int8"
+            },
+            "shape": [
+                64
+            ]
+        },
+        {
+            "op": "fused_cast_17",
+            "name": "fused_cast_17",
+            "attrs": {
+                "func_name": "fused_cast_17",
+                "flatten_data": "0",
+                "num_inputs": "1",
+                "num_outputs": "1",
+                "T": "type: int16"
+            },
+            "inputs": [
+                "p8"
+            ],
+            "shape": [
+                64
+            ]
+        },
+        {
+            "op": "fused_nn_bias_add_1",
+            "name": "fused_nn_bias_add_1",
+            "attrs": {
+                "func_name": "fused_nn_bias_add_1",
+                "flatten_data": "0",
+                "num_inputs": "2",
+                "num_outputs": "1",
+                "T": "type: int16"
+            },
+            "inputs": [
+                "fused_nn_conv2d",
+                "fused_cast_17"
+            ],
+            "shape": [
+                1,
+                8,
+                8,
+                64
+            ]
+        },
+        {
+            "op": "fused_cast_4",
+            "name": "fused_cast_41",
+            "attrs": {
+                "func_name": "fused_cast_4",
+                "flatten_data": "0",
+                "num_inputs": "1",
+                "num_outputs": "1",
+                "T": "type: int32"
+            },
+            "inputs": [
+                "fused_nn_bias_add_1"
+            ],
+            "shape": [
+                1,
+                8,
+                8,
+                64
+            ]
+        },
+        {
+            "op": "param",
+            "name": "p9",
+            "inputs": [],
+            "attrs": {
+                "T": "type: int32"
+            },
+            "shape": []
+        },
+        {
+            "op": "fused_right_shift_1",
+            "name": "fused_right_shift_1",
+            "attrs": {
+                "func_name": "fused_right_shift_1",
+                "flatten_data": "0",
+                "num_inputs": "2",
+                "num_outputs": "1",
+                "T": "type: int32"
+            },
+            "inputs": [
+                "fused_cast_41",
+                "p9"
+            ],
+            "shape": [
+                1,
+                8,
+                8,
+                64
+            ]
+        },
+        {
+            "op": "fused_cast_6",
+            "name": "fused_cast_6",
+            "attrs": {
+                "func_name": "fused_cast_6",
+                "flatten_data": "0",
+                "num_inputs": "1",
+                "num_outputs": "1",
+                "T": "type: int8"
+            },
+            "inputs": [
+                "fused_right_shift_1"
+            ],
+            "shape": [
+                1,
+                8,
+                8,
+                64
+            ]
+        },
+        {
+            "op": "fused_nn_relu",
+            "name": "fused_nn_relu",
+            "attrs": {
+                "func_name": "fused_nn_relu",
+                "flatten_data": "0",
+                "num_inputs": "1",
+                "num_outputs": "1",
+                "T": "type: int8"
+            },
+            "inputs": [
+                "fused_cast_6"
+            ],
+            "shape": [
+                1,
+                8,
+                8,
+                64
+            ]
+        },
+        {
+            "op": "fused_cast_5",
+            "name": "fused_cast_5",
+            "attrs": {
+                "func_name": "fused_cast_5",
+                "flatten_data": "0",
+                "num_inputs": "1",
+                "num_outputs": "1",
+                "T": "type: int16"
+            },
+            "inputs": [
+                "fused_nn_relu"
+            ],
+            "shape": [
+                1,
+                8,
+                8,
+                64
+            ]
+        },
+        {
+            "op": "fused_cast_4",
+            "name": "fused_cast_4",
+            "attrs": {
+                "func_name": "fused_cast_4",
+                "flatten_data": "0",
+                "num_inputs": "1",
+                "num_outputs": "1",
+                "T": "type: int32"
+            },
+            "inputs": [
+                "fused_cast_5"
+            ],
+            "shape": [
+                1,
+                8,
+                8,
+                64
+            ]
+        },
+        {
+            "op": "fused_nn_avg_pool2d",
+            "name": "fused_nn_avg_pool2d",
+            "attrs": {
+                "func_name": "fused_nn_avg_pool2d",
+                "flatten_data": "0",
+                "num_inputs": "1",
+                "num_outputs": "1",
+                "T": "type: int32"
+            },
+            "inputs": [
+                "fused_cast_4"
+            ],
+            "shape": [
+                1,
+                4,
+                4,
+                64
+            ]
+        },
+        {
+            "op": "fused_cast_3",
+            "name": "fused_cast_3",
+            "attrs": {
+                "func_name": "fused_cast_3",
+                "flatten_data": "0",
+                "num_inputs": "1",
+                "num_outputs": "1",
+                "T": "type: int16"
+            },
+            "inputs": [
+                "fused_nn_avg_pool2d"
+            ],
+            "shape": [
+                1,
+                4,
+                4,
+                64
+            ]
+        },
+        {
+            "op": "fused_nn_batch_flatten",
+            "name": "fused_nn_batch_flatten",
+            "attrs": {
+                "func_name": "fused_nn_batch_flatten",
+                "flatten_data": "0",
+                "num_inputs": "1",
+                "num_outputs": "1",
+                "T": "type: int16"
+            },
+            "inputs": [
+                "fused_cast_3"
+            ],
+            "shape": [
+                1,
+                1024
+            ]
+        },
+        {
+            "op": "fused_cast_2",
+            "name": "fused_cast_2",
+            "attrs": {
+                "func_name": "fused_cast_2",
+                "flatten_data": "0",
+                "num_inputs": "1",
+                "num_outputs": "1",
+                "T": "type: int16"
+            },
+            "inputs": [
+                "fused_nn_batch_flatten"
+            ],
+            "shape": [
+                1,
+                1024
+            ]
+        },
+        {
+            "op": "param",
+            "name": "p10",
+            "inputs": [],
+            "attrs": {
+                "T": "type: int8"
+            },
+            "shape": [
+                10,
+                1024
+            ]
+        },
+        {
+            "op": "fused_nn_dense",
+            "name": "fused_nn_dense",
+            "attrs": {
+                "func_name": "fused_nn_dense",
+                "flatten_data": "0",
+                "num_inputs": "2",
+                "num_outputs": "1",
+                "T": "type: int16"
+            },
+            "inputs": [
+                "fused_cast_2",
+                "p10"
+            ],
+            "shape": [
+                1,
+                10
+            ]
+        },
+        {
+            "op": "param",
+            "name": "p11",
+            "inputs": [],
+            "attrs": {
+                "T": "type: int8"
+            },
+            "shape": [
+                10
+            ]
+        },
+        {
+            "op": "fused_cast_19",
+            "name": "fused_cast_19",
+            "attrs": {
+                "func_name": "fused_cast_19",
+                "flatten_data": "0",
+                "num_inputs": "1",
+                "num_outputs": "1",
+                "T": "type: int32"
+            },
+            "inputs": [
+                "p11"
+            ],
+            "shape": [
+                10
+            ]
+        },
+        {
+            "op": "param",
+            "name": "p12",
+            "inputs": [],
+            "attrs": {
+                "T": "type: int32"
+            },
+            "shape": []
+        },
+        {
+            "op": "fused_left_shift",
+            "name": "fused_left_shift",
+            "attrs": {
+                "func_name": "fused_left_shift",
+                "flatten_data": "0",
+                "num_inputs": "2",
+                "num_outputs": "1",
+                "T": "type: int32"
+            },
+            "inputs": [
+                "fused_cast_19",
+                "p12"
+            ],
+            "shape": [
+                10
+            ]
+        },
+        {
+            "op": "fused_cast_18",
+            "name": "fused_cast_18",
+            "attrs": {
+                "func_name": "fused_cast_18",
+                "flatten_data": "0",
+                "num_inputs": "1",
+                "num_outputs": "1",
+                "T": "type: int16"
+            },
+            "inputs": [
+                "fused_left_shift"
+            ],
+            "shape": [
+                10
+            ]
+        },
+        {
+            "op": "fused_nn_bias_add",
+            "name": "fused_nn_bias_add",
+            "attrs": {
+                "func_name": "fused_nn_bias_add",
+                "flatten_data": "0",
+                "num_inputs": "2",
+                "num_outputs": "1",
+                "T": "type: int16"
+            },
+            "inputs": [
+                "fused_nn_dense",
+                "fused_cast_18"
+            ],
+            "shape": [
+                1,
+                10
+            ]
+        },
+        {
+            "op": "fused_cast_1",
+            "name": "fused_cast_1",
+            "attrs": {
+                "func_name": "fused_cast_1",
+                "flatten_data": "0",
+                "num_inputs": "1",
+                "num_outputs": "1",
+                "T": "type: int32"
+            },
+            "inputs": [
+                "fused_nn_bias_add"
+            ],
+            "shape": [
+                1,
+                10
+            ]
+        },
+        {
+            "op": "param",
+            "name": "p13",
+            "inputs": [],
+            "attrs": {
+                "T": "type: int32"
+            },
+            "shape": []
+        },
+        {
+            "op": "fused_right_shift",
+            "name": "fused_right_shift",
+            "attrs": {
+                "func_name": "fused_right_shift",
+                "flatten_data": "0",
+                "num_inputs": "2",
+                "num_outputs": "1",
+                "T": "type: int32"
+            },
+            "inputs": [
+                "fused_cast_1",
+                "p13"
+            ],
+            "shape": [
+                1,
+                10
+            ]
+        },
+        {
+            "op": "fused_cast",
+            "name": "fused_cast",
+            "attrs": {
+                "func_name": "fused_cast",
+                "flatten_data": "0",
+                "num_inputs": "1",
+                "num_outputs": "1",
+                "T": "type: int8"
+            },
+            "inputs": [
+                "fused_right_shift"
+            ],
+            "shape": [
+                1,
+                10
+            ]
+        }
+    ],
+    "arg_nodes": [
+        0,
+        2,
+        6,
+        8,
+        12,
+        18,
+        20,
+        24,
+        33,
+        35,
+        39,
+        49,
+        51,
+        53,
+        58
+    ],
+    "heads": [
+        [
+            60,
+            0,
+            0
+        ]
+    ],
+    "attrs": {
+        "dltype": [
+            "list_str",
+            [
+                "uint8",
+                "int16",
+                "uint8",
+                "int16",
+                "int16",
+                "int8",
+                "int8",
+                "int16",
+                "int8",
+                "int16",
+                "int16",
+                "int32",
+                "int32",
+                "int32",
+                "int8",
+                "int8",
+                "int16",
+                "int16",
+                "int8",
+                "int16",
+                "int8",
+                "int16",
+                "int16",
+                "int32",
+                "int32",
+                "int32",
+                "int8",
+                "int16",
+                "int16",
+                "int16",
+                "int32",
+                "int32",
+                "int8",
+                "int8",
+                "int16",
+                "int8",
+                "int16",
+                "int16",
+                "int32",
+                "int32",
+                "int32",
+                "int8",
+                "int8",
+                "int16",
+                "int32",
+                "int32",
+                "int16",
+                "int16",
+                "int16",
+                "int8",
+                "int16",
+                "int8",
+                "int32",
+                "int32",
+                "int32",
+                "int16",
+                "int16",
+                "int32",
+                "int32",
+                "int32",
+                "int8"
+            ]
+        ],
+        "storage_id": [
+            "list_int",
+            [
+                0,
+                1,
+                2,
+                3,
+                4,
+                1,
+                5,
+                4,
+                6,
+                7,
+                1,
+                4,
+                8,
+                1,
+                4,
+                1,
+                4,
+                1,
+                9,
+                4,
+                10,
+                7,
+                1,
+                4,
+                11,
+                1,
+                4,
+                1,
+                4,
+                1,
+                4,
+                1,
+                3,
+                12,
+                4,
+                13,
+                7,
+                1,
+                4,
+                14,
+                1,
+                3,
+                15,
+                4,
+                1,
+                15,
+                3,
+                15,
+                3,
+                16,
+                7,
+                17,
+                18,
+                19,
+                20,
+                18,
+                20,
+                18,
+                21,
+                20,
+                18
+            ]
+        ],
+        "shape": [
+            "list_shape",
+            [
+                [
+                    1,
+                    32,
+                    32,
+                    3
+                ],
+                [
+                    1,
+                    32,
+                    32,
+                    3
+                ],
+                [
+                    1,
+                    32,
+                    32,
+                    3
+                ],
+                [
+                    1,
+                    32,
+                    32,
+                    3
+                ],
+                [
+                    1,
+                    32,
+                    32,
+                    3
+                ],
+                [
+                    1,
+                    32,
+                    32,
+                    3
+                ],
+                [
+                    5,
+                    5,
+                    3,
+                    32
+                ],
+                [
+                    1,
+                    32,
+                    32,
+                    32
+                ],
+                [
+                    32
+                ],
+                [
+                    32
+                ],
+                [
+                    1,
+                    32,
+                    32,
+                    32
+                ],
+                [
+                    1,
+                    32,
+                    32,
+                    32
+                ],
+                [],
+                [
+                    1,
+                    32,
+                    32,
+                    32
+                ],
+                [
+                    1,
+                    32,
+                    32,
+                    32
+                ],
+                [
+                    1,
+                    16,
+                    16,
+                    32
+                ],
+                [
+                    1,
+                    16,
+                    16,
+                    32
+                ],
+                [
+                    1,
+                    16,
+                    16,
+                    32
+                ],
+                [
+                    5,
+                    5,
+                    32,
+                    32
+                ],
+                [
+                    1,
+                    16,
+                    16,
+                    32
+                ],
+                [
+                    32
+                ],
+                [
+                    32
+                ],
+                [
+                    1,
+                    16,
+                    16,
+                    32
+                ],
+                [
+                    1,
+                    16,
+                    16,
+                    32
+                ],
+                [],
+                [
+                    1,
+                    16,
+                    16,
+                    32
+                ],
+                [
+                    1,
+                    16,
+                    16,
+                    32
+                ],
+                [
+                    1,
+                    16,
+                    16,
+                    32
+                ],
+                [
+                    1,
+                    16,
+                    16,
+                    32
+                ],
+                [
+                    1,
+                    16,
+                    16,
+                    32
+                ],
+                [
+                    1,
+                    16,
+                    16,
+                    32
+                ],
+                [
+                    1,
+                    8,
+                    8,
+                    32
+                ],
+                [
+                    1,
+                    8,
+                    8,
+                    32
+                ],
+                [
+                    5,
+                    5,
+                    32,
+                    64
+                ],
+                [
+                    1,
+                    8,
+                    8,
+                    64
+                ],
+                [
+                    64
+                ],
+                [
+                    64
+                ],
+                [
+                    1,
+                    8,
+                    8,
+                    64
+                ],
+                [
+                    1,
+                    8,
+                    8,
+                    64
+                ],
+                [],
+                [
+                    1,
+                    8,
+                    8,
+                    64
+                ],
+                [
+                    1,
+                    8,
+                    8,
+                    64
+                ],
+                [
+                    1,
+                    8,
+                    8,
+                    64
+                ],
+                [
+                    1,
+                    8,
+                    8,
+                    64
+                ],
+                [
+                    1,
+                    8,
+                    8,
+                    64
+                ],
+                [
+                    1,
+                    4,
+                    4,
+                    64
+                ],
+                [
+                    1,
+                    4,
+                    4,
+                    64
+                ],
+                [
+                    1,
+                    1024
+                ],
+                [
+                    1,
+                    1024
+                ],
+                [
+                    10,
+                    1024
+                ],
+                [
+                    1,
+                    10
+                ],
+                [
+                    10
+                ],
+                [
+                    10
+                ],
+                [],
+                [
+                    10
+                ],
+                [
+                    10
+                ],
+                [
+                    1,
+                    10
+                ],
+                [
+                    1,
+                    10
+                ],
+                [],
+                [
+                    1,
+                    10
+                ],
+                [
+                    1,
+                    10
+                ]
+            ]
+        ]
+    },
+    "node_row_ptr": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        39,
+        40,
+        41,
+        42,
+        43,
+        44,
+        45,
+        46,
+        47,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59,
+        60,
+        61
+    ]
+}
