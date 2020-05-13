@@ -1,0 +1,17 @@
+FROM bvlc/caffe:cpu
+
+RUN apt-get update
+RUN apt-get install -y curl unzip
+#&& \
+#    apt-get install -y software-properties-common && \
+#    add-apt-repository ppa:deadsnakes/ppa && \
+#    apt-get update && apt-get install -y python3.7
+
+RUN mkdir /work
+RUN cd /work && curl -LJO https://github.com/protocolbuffers/protobuf/releases/download/v3.11.4/protoc-3.11.4-linux-x86_64.zip && unzip protoc-3.11.4-linux-x86_64.zip
+ENV PATH=/work/protoc/bin:$PATH
+
+RUN cd /opt/caffe && ./data/cifar10/get_cifar10.sh && ./examples/cifar10/create_cifar10.sh
+
+COPY convert_hdf5_to_caffemodel.py /work/
+RUN chmod u+x /work/convert_hdf5_to_caffemodel.py
