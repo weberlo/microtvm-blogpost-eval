@@ -71,3 +71,26 @@ def build_relay_mod(cifar10_conv_op_impl, target, use_random_params=True):
     )
 
     return BUILD_RELAY_MOD_RETURN
+
+# Model/Data util
+def get_sample_points(n, data_layout='NCHW'):
+    """Grabs a single input/label pair from MNIST"""
+    ctx = mxnet.cpu()
+    # Load a random image from the test dataset
+    sample_data = mxnet.gluon.data.DataLoader(
+            mxnet.gluon.data.vision.CIFAR10(train=False),
+            1)#,
+#            shuffle=True)
+
+    samples = []
+    for i, (data, label) in zip(range(n), sample_data):
+        if i == n:
+            break
+        data_np = numpy.copy(data.as_in_context(ctx).asnumpy())
+        # gluon data is in NHWC format
+        shape = util.LabelledShape(dim_iter=zip('NHWC', data_np.shape), dtype='uint8')
+        data_nt = util.LabelledTensor(data_np, shape).with_layout(data_layout)
+
+        label = int(label.asnumpy()[0])
+        samples.append({'data': data_nt, 'label': label})
+    return samples
