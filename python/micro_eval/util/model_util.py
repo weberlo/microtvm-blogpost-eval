@@ -1,5 +1,8 @@
 import argparse
+import mxnet
+import numpy
 from micro_eval.model import cifar10_cnn
+from micro_eval import util
 
 
 VALID_CONV_OP_IMPLS = ('direct', 'direct_simd')
