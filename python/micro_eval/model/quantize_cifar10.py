@@ -32,12 +32,12 @@ def main():
   for data in samples:
     numpy_samples.append({'data': data['data'].data})
 
-  with relay.quantize.qconfig(calibrate_mode='kl_divergence', weight_scale='max'):
-    quantized = relay.quantize.quantize(mod, params, dataset=numpy_samples)
+  with relay.quantize.qconfig(calibrate_mode='global_scale', global_scale=8.0, nbit_activation=8, dtype_activation="int8", skip_conv_layers=[0], dtype_input="int8", dtype_weight="int8"):
+    quantized = relay.quantize.quantize(mod, params) #, dataset=numpy_samples)
 
-  print('quantized', quantized)
-  with open(args.quantized_tvm_model, 'w') as f:
-    f.write(tvm.ir.save_json(quantized))
+    print('output:', quantized)
+#  with open(args.quantized_tvm_model, 'w') as f:
+#    f.write(tvm.ir.save_json(quantized))
 
 
 if __name__ == '__main__':
