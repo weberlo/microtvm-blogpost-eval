@@ -156,7 +156,7 @@ def eval_cmsis(args, target, samples):
         # Build the function
         LOGGER.debug('[Building]')
         micro_mod = create_micro_mod(
-            util.MockCMod(CIFAR10_SRC_PATH),
+            util.MockCMod([CIFAR10_SRC_PATH]),
             cmsis_dev_config,
             lib_src_paths=CMSIS_SRC_PATHS,
             lib_headers=util.CMSIS_HEADERS,
@@ -213,7 +213,7 @@ MICRO_SEC_CONSTRAINTS = {
     'rodata': (300, MemConstraint.ABSOLUTE_BYTES),
     'data': (0x80, MemConstraint.ABSOLUTE_BYTES),
     'bss': (820, MemConstraint.ABSOLUTE_BYTES),
-    'args': (4096, MemConstraint.ABSOLUTE_BYTES),
+    'args': (4496, MemConstraint.ABSOLUTE_BYTES),
     'heap': (100.0, MemConstraint.WEIGHT),
     'workspace': (140000, MemConstraint.ABSOLUTE_BYTES),
     'stack': (128, MemConstraint.ABSOLUTE_BYTES),
@@ -346,8 +346,7 @@ def main():
 
     target = tvm.target.create('c -device=micro_dev')
 
-    samples = model_util.get_sample_points(
-        args.num_samples, model_util.has_simd_strategy(args.cifar10_conv_op_impl))
+    samples = model_util.get_sample_points(args.num_samples)
 
     results = {}
     to_run = list(args.models)

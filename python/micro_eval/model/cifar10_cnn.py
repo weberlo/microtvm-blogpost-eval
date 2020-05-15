@@ -132,8 +132,8 @@ def gen_cifar10_cnn(data_layout, kernel_layouts, op_strategy='direct', use_rando
              kernel_size=[5, 5],
              data_layout="{data_layout}",
              kernel_layout="{kernel_layouts[0]}",
-             out_dtype="int16");
-      %2 = nn.bias_add(%1, cast(%conv0_bias, "int16"), axis={bias_add_axis});
+             out_dtype="int32");
+      %2 = nn.bias_add(cast(%1, "int16"), cast(%conv0_bias, "int16"), axis={bias_add_axis});
       %3 = right_shift(cast(%2, "int32"), 9);
       %4 = cast(%3, "int8");
       %5 = nn.max_pool2d(%4,
@@ -141,7 +141,7 @@ def gen_cifar10_cnn(data_layout, kernel_layouts, op_strategy='direct', use_rando
              strides=[2, 2],
              layout="{data_layout}",
              ceil_mode=True);
-      %6 = nn.relu(cast(%5, "int16"));
+      %6 = cast(nn.relu(cast(%5, "int16")), "int8");
       %7 = nn.conv2d(
              %6,
              %conv1_weight,
@@ -150,8 +150,8 @@ def gen_cifar10_cnn(data_layout, kernel_layouts, op_strategy='direct', use_rando
              kernel_size=[5, 5],
              data_layout="{data_layout}",
              kernel_layout="{kernel_layouts[1]}",
-             out_dtype="int16");
-      %8 = nn.bias_add(%7, cast(%conv1_bias, "int16"), axis={bias_add_axis});
+             out_dtype="int32");
+      %8 = nn.bias_add(cast(%7, "int16"), cast(%conv1_bias, "int16"), axis={bias_add_axis});
       %9 = right_shift(cast(%8, "int32"), 9);
       %10 = cast(%9, "int8");
       %11 = cast(nn.relu(cast(%10, "int16")), "int16");
@@ -168,8 +168,8 @@ def gen_cifar10_cnn(data_layout, kernel_layouts, op_strategy='direct', use_rando
               kernel_size=[5, 5],
               data_layout="{data_layout}",
               kernel_layout="{kernel_layouts[2]}",
-              out_dtype="int16");
-      %14 = nn.bias_add(%13, cast(%conv2_bias, "int16"), axis={bias_add_axis});
+              out_dtype="int32");
+      %14 = nn.bias_add(cast(%13, "int16"), cast(%conv2_bias, "int16"), axis={bias_add_axis});
       %15 = right_shift(cast(%14, "int32"), 9);
       %16 = cast(%15, "int8");
       %17 = cast(nn.relu(%16), "int16");
@@ -193,3 +193,20 @@ def gen_cifar10_cnn(data_layout, kernel_layouts, op_strategy='direct', use_rando
         params = _load_cmsis_params(mod, param_shapes)
 
     return mod, params
+
+# def gen_cifar10_cnn(data_layout, kernel_layouts, op_strategy='direct', use_random_params=False):
+#     assert data_layout == 'NCHW'
+#     onnx_model = onnx.load(args.onnx_model)
+
+#     data_shape = util.LabelledShape(N=1, C=3, H=32, W=32, dtype='uint8')
+#     mod, params = relay.frontend.from_onnx(onnx_model, {"data": data_shape.shape})
+
+#     samples = model_util.get_sample_points(args.num_samples, data_shape.layout)
+#     numpy_samples = []
+#     for data in samples:
+#         numpy_samples.append({'data': data['data'].data})
+
+#     with relay.quantize.qconfig(calibrate_mode='global_scale', global_scale=8.0):
+#         quantized = relay.quantize.quantize(mod, params, dataset=numpy_samples)
+
+#     return quantized, params
