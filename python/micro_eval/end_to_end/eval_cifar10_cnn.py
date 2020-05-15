@@ -16,7 +16,8 @@ import numpy as np
 import tvm
 from tvm import autotvm
 from tvm.autotvm.task.space import FallbackConfigEntity
-from tvm.contrib import graph_runtime, util
+from tvm.contrib import graph_runtime
+from tvm.contrib import util as contrib_util
 from tvm.contrib.debugger import debug_runtime, debug_result
 from tvm import relay
 from tvm import micro
@@ -352,6 +353,7 @@ def main():
     to_run = list(args.models)
     if args.validate_against and args.validate_against not in to_run:
         to_run.append(args.validate_against)
+#    with contrib_util.TempDirectory.set_keep_for_debug():
     for model_name in to_run:
         results[model_name] = globals()[f'eval_{model_name}'](args, target, samples)
 
