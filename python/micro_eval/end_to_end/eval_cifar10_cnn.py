@@ -72,7 +72,7 @@ CMSIS_SRC_PATHS = [
 
 # CMSIS requires different section spacing than micro.
 CMSIS_SEC_CONTRAINTS = {
-    'text': (35000, MemConstraint.ABSOLUTE_BYTES),
+    'text': (45000, MemConstraint.ABSOLUTE_BYTES),
     'rodata': (4096, MemConstraint.ABSOLUTE_BYTES),
     'data': (100000, MemConstraint.ABSOLUTE_BYTES),
     'bss': (1320, MemConstraint.ABSOLUTE_BYTES),
