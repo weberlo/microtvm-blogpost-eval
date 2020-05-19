@@ -191,14 +191,8 @@ def eval_cmsis(args, target, samples):
             lib_headers=util.CMSIS_HEADERS,
             lib_include_paths=util.CMSIS_INCLUDE_PATHS + [CIFAR10_INCLUDE_PATH])
 
-        funcs = collections.OrderedDict([
-            ('cifar10', util.LabelledShape(N=1, H=32, W=32, C=32, dtype='int8')),
-#            ('conv2', util.LabelledShape(N=1, H=16, W=16, C=32, dtype='int8')),
-#            ('conv3', util.LabelledShape(N=10, dtype='int8')),
-#            ('arm_cifar10_cnn_wrapper', util.LabelledShape(N=1, X=10, dtype='int8')),
-#            ('cifar10', util.LabelledShape(N=10, dtype='int8')),
-        ])
-        ctx = tvm.micro_dev(0)
+        LOGGER.info('[CMSIS-q7]')
+
         results = []
         for i, sample in enumerate(samples):
             LOGGER.info(f'[Sample {i}]')
@@ -238,13 +232,13 @@ def eval_cmsis(args, target, samples):
 
 # Section constraints to use for the compiled uTVM CIFAR10 implementation.
 MICRO_SEC_CONSTRAINTS = {
-    'text': (42000, MemConstraint.ABSOLUTE_BYTES),
+    'text': (23000, MemConstraint.ABSOLUTE_BYTES),
     'rodata': (300, MemConstraint.ABSOLUTE_BYTES),
     'data': (0x80, MemConstraint.ABSOLUTE_BYTES),
     'bss': (820, MemConstraint.ABSOLUTE_BYTES),
     'args': (4496, MemConstraint.ABSOLUTE_BYTES),
     'heap': (100.0, MemConstraint.WEIGHT),
-    'workspace': (100000, MemConstraint.ABSOLUTE_BYTES),
+    'workspace': (145000, MemConstraint.ABSOLUTE_BYTES),
     'stack': (128, MemConstraint.ABSOLUTE_BYTES),
 }
 
@@ -319,8 +313,8 @@ def eval_utvm(args, target, samples):
             # label = cifar10_cnn.CIFAR10_CLASSES[label]
             # LOGGER.info(f'  prediction was {prediction}')
             # LOGGER.info(f'  actual was {label}')
-#            predictions.append(micro_output_np)
-            predictions.append([])
+            predictions.append(micro_output_np)
+#            predictions.append([])
 
         return predictions
 

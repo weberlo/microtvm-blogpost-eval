@@ -136,18 +136,6 @@ def gen_cifar10_cnn(data_layout, kernel_layouts, op_strategy='direct', use_rando
              data_layout="{data_layout}",
              kernel_layout="{kernel_layouts[0]}",
              out_dtype="int32");
-        %1
-    }}
-    """)
-    print('mod', mod.astext())
-    if use_random_params:
-        params = _gen_random_params(mod, data_layout, kernel_layouts)
-    else:
-        params = _load_cmsis_params(mod, param_shapes)
-
-    return mod, params
-
-"""
       %2 = nn.bias_add(%1, cast(%conv0_bias, "int32"), axis={bias_add_axis});
       %3 = right_shift(%2, 9);
       %4 = cast(%3, "int8");
@@ -199,4 +187,11 @@ def gen_cifar10_cnn(data_layout, kernel_layouts, op_strategy='direct', use_rando
       %21 = nn.bias_add(%20, cast(left_shift(cast(%dense0_bias, "int32"), 3), "int16"), axis=-1);
       %22 = right_shift(cast(%21, "int32"), 5);
       cast(%22, "int8")
-"""
+    }}
+    """)
+    if use_random_params:
+        params = _gen_random_params(mod, data_layout, kernel_layouts)
+    else:
+        params = _load_cmsis_params(mod, param_shapes)
+
+    return mod, params
