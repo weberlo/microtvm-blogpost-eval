@@ -78,7 +78,10 @@ def _load_cmsis_params(mod, param_shapes):
 
         assert param_shape.dims == relay_shape.dims
         param = cmsis_tensor.resize(param_shape)
-        params[name] = tvm.nd.array(param.data, tvm.cpu(0))
+        data = param.data
+        if name == 'mean_data':
+            data = relay_shape.gen_zero_tensor().data
+        params[name] = tvm.nd.array(data, tvm.cpu(0))
 
     return params
 
@@ -133,8 +136,20 @@ def gen_cifar10_cnn(data_layout, kernel_layouts, op_strategy='direct', use_rando
              data_layout="{data_layout}",
              kernel_layout="{kernel_layouts[0]}",
              out_dtype="int32");
-      %2 = nn.bias_add(cast(%1, "int16"), cast(%conv0_bias, "int16"), axis={bias_add_axis});
-      %3 = right_shift(cast(%2, "int32"), 9);
+        %1
+    }}
+    """)
+    print('mod', mod.astext())
+    if use_random_params:
+        params = _gen_random_params(mod, data_layout, kernel_layouts)
+    else:
+        params = _load_cmsis_params(mod, param_shapes)
+
+    return mod, params
+
+"""
+      %2 = nn.bias_add(%1, cast(%conv0_bias, "int32"), axis={bias_add_axis});
+      %3 = right_shift(%2, 9);
       %4 = cast(%3, "int8");
       %5 = nn.max_pool2d(%4,
              pool_size=[3, 3],
@@ -184,29 +199,4 @@ def gen_cifar10_cnn(data_layout, kernel_layouts, op_strategy='direct', use_rando
       %21 = nn.bias_add(%20, cast(left_shift(cast(%dense0_bias, "int32"), 3), "int16"), axis=-1);
       %22 = right_shift(cast(%21, "int32"), 5);
       cast(%22, "int8")
-    }}
-    """)
-    print('mod', mod.astext())
-    if use_random_params:
-        params = _gen_random_params(mod, data_layout, kernel_layouts)
-    else:
-        params = _load_cmsis_params(mod, param_shapes)
-
-    return mod, params
-
-# def gen_cifar10_cnn(data_layout, kernel_layouts, op_strategy='direct', use_random_params=False):
-#     assert data_layout == 'NCHW'
-#     onnx_model = onnx.load(args.onnx_model)
-
-#     data_shape = util.LabelledShape(N=1, C=3, H=32, W=32, dtype='uint8')
-#     mod, params = relay.frontend.from_onnx(onnx_model, {"data": data_shape.shape})
-
-#     samples = model_util.get_sample_points(args.num_samples, data_shape.layout)
-#     numpy_samples = []
-#     for data in samples:
-#         numpy_samples.append({'data': data['data'].data})
-
-#     with relay.quantize.qconfig(calibrate_mode='global_scale', global_scale=8.0):
-#         quantized = relay.quantize.quantize(mod, params, dataset=numpy_samples)
-
-#     return quantized, params
+"""

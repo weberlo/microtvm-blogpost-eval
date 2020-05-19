@@ -103,7 +103,10 @@ class LabelledTensor:
         assert other.dtype == self.shape.dtype
         intermediate_shape = LabelledShape.from_dims_and_layout(self.shape, other.layout, dtype=self.shape.dtype)
         intermediate = self.transpose(intermediate_shape)
-        return LabelledTensor(np.resize(intermediate.data, other.shape), other)
+        zeroes = np.zeros(other.shape, dtype=other.dtype)
+        assign_shape = tuple(slice(0,s) for s in intermediate.data.shape)
+        zeroes[assign_shape] = intermediate.data
+        return LabelledTensor(zeroes, other) #np.resize(intermediate.data, other.shape), other)
 
     def transpose(self, other: LabelledShape):
         mapping = self.shape.make_transpose_mapping(other)
@@ -289,7 +292,8 @@ def relay_micro_build(func, dev_config, target, params=None, lib_headers=None, l
     micro_mod = micro.create_micro_mod(c_mod, dev_config, lib_headers=lib_headers, lib_include_paths=lib_include_paths)
     ctx = tvm.micro_dev(0)
     if DEBUG_MODE:
-        dump_root = f'{os.path.dirname(__file__)}/../../debug/micro'
+        print('debug mode on')
+        dump_root = f'{get_repo_root()}/debug/micro'
         mod = debug_runtime.create(graph, micro_mod, ctx, dump_root=dump_root)
     else:
         mod = graph_runtime.create(graph, micro_mod, ctx)

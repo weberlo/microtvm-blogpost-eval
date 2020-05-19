@@ -47,6 +47,30 @@ MICRO_HEADERS = util.CMSIS_HEADERS
 MICRO_INCLUDE_PATHS = util.CMSIS_INCLUDE_PATHS
 
 
+# Model/Data util
+def get_sample_points(n, has_simd_strategy):
+    """Grabs a single input/label pair from MNIST"""
+    ctx = mx.cpu()
+    # Load a random image from the test dataset
+    sample_data = mx.gluon.data.DataLoader(
+            mx.gluon.data.vision.CIFAR10(train=False),
+            1,
+            shuffle=False)
+
+    samples = []
+    for i, (data, label) in zip(range(n), sample_data):
+        if i == n:
+            break
+        data_np = np.copy(data.as_in_context(ctx).asnumpy())
+        # gluon data is in NHWC format
+        shape = util.LabelledShape(dim_iter=zip('NHWC', data_np.shape), dtype='uint8')
+        data_nt = util.LabelledTensor(data_np, shape)
+
+        label = int(label.asnumpy()[0])
+        samples.append({'data': data_nt, 'label': label})
+    return samples
+
+
 # CMSIS config
 CIFAR10_SRC_PATH = f'{util.get_repo_root()}/cmsis_src/cmsis_cifar10_cnn/cmsis_cifar10_cnn_tfl.c'
 CIFAR10_INCLUDE_PATH = f'{util.get_repo_root()}/cmsis_src/cmsis_cifar10_cnn'
@@ -113,7 +137,8 @@ def eval_interp(args, target, samples):
 def eval_cpu(args, target, samples):
     mod = model_util.build_relay_mod(args.cifar10_conv_op_impl, 'x86',
                                      use_random_params=not args.validate_against)
-    with relay.build_config(opt_level=0, disabled_pass={"AlterOpLayout"}):
+    print('weights', mod.params['conv0_weight'].asnumpy()[2:3:,2:3,:,0:3])
+    with relay.build_config(opt_level=3, disabled_pass={"AlterOpLayout"}):
         graph, op_mod, params = relay.build(mod.mod['main'], target="llvm", params=mod.params)
         if util.DEBUG_MODE:
             graph_mod = debug_runtime.create(graph, op_mod, tvm.cpu(0), dump_root=f'{util.get_repo_root()}/debug/cpu')
@@ -129,8 +154,11 @@ def eval_cpu(args, target, samples):
             data_nt = data_nt.resize(data_nt.shape.as_template_for(C=4))
 #        assert data_np.shape == DATA_SHAPE
 #        assert data_np.dtype == IN_DTYPE
-        data_tvm = tvm.nd.array(data_nt.data, ctx=tvm.cpu(0))
+        data_np = data_nt.data
         print(data_nt.shape)
+#        data_np = np.array([[[[1, 1, 1, 0]] + [[0, 0, 0, 0]] * 31] + [[[0, 0, 0, 0]] * 32] * 31], dtype='int8')
+#        data_np = np.array([[[[255, 255, 255, 0]] * 32] * 32], dtype='int8')
+        data_tvm = tvm.nd.array(data_np, ctx=tvm.cpu(0))
         graph_mod.set_input('data', data_tvm)
 #        print('built', graph_mod.astext())
         graph_mod.run()
@@ -210,13 +238,13 @@ def eval_cmsis(args, target, samples):
 
 # Section constraints to use for the compiled uTVM CIFAR10 implementation.
 MICRO_SEC_CONSTRAINTS = {
-    'text': (23000, MemConstraint.ABSOLUTE_BYTES),
+    'text': (42000, MemConstraint.ABSOLUTE_BYTES),
     'rodata': (300, MemConstraint.ABSOLUTE_BYTES),
     'data': (0x80, MemConstraint.ABSOLUTE_BYTES),
     'bss': (820, MemConstraint.ABSOLUTE_BYTES),
     'args': (4496, MemConstraint.ABSOLUTE_BYTES),
     'heap': (100.0, MemConstraint.WEIGHT),
-    'workspace': (140000, MemConstraint.ABSOLUTE_BYTES),
+    'workspace': (100000, MemConstraint.ABSOLUTE_BYTES),
     'stack': (128, MemConstraint.ABSOLUTE_BYTES),
 }
 
@@ -269,6 +297,11 @@ def eval_utvm(args, target, samples):
 
             assert data_np.shape == get_const_tuple(mod.mod['main'].params[0].checked_type.shape)
 
+#            data_np = np.array([[[[1, 1, 1, 0]] + [[0, 0, 0, 0]] * 31] + [[[0, 0, 0, 0]] * 32] * 31])
+#            data_np = np.array([[[[255, 255, 255, 0]] * 32] * 32])
+            print('datashape', data_np.shape)
+            print('weights', mod.params['conv0_weight'].asnumpy()[2:3:,2:3,0:3,:])
+
             # execute with `image` as the input
             LOGGER.debug('[Executing]')
             sess.get_last_batch_time()
@@ -286,7 +319,8 @@ def eval_utvm(args, target, samples):
             # label = cifar10_cnn.CIFAR10_CLASSES[label]
             # LOGGER.info(f'  prediction was {prediction}')
             # LOGGER.info(f'  actual was {label}')
-            predictions.append(micro_output_np)
+#            predictions.append(micro_output_np)
+            predictions.append([])
 
         return predictions
 
@@ -353,9 +387,9 @@ def main():
     to_run = list(args.models)
     if args.validate_against and args.validate_against not in to_run:
         to_run.append(args.validate_against)
-#    with contrib_util.TempDirectory.set_keep_for_debug():
-    for model_name in to_run:
-        results[model_name] = globals()[f'eval_{model_name}'](args, target, samples)
+    with contrib_util.TempDirectory.set_keep_for_debug():
+        for model_name in to_run:
+            results[model_name] = globals()[f'eval_{model_name}'](args, target, samples)
 
     if args.validate_against:
         for i in range(args.num_samples):
