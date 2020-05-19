@@ -47,32 +47,8 @@ MICRO_HEADERS = util.CMSIS_HEADERS
 MICRO_INCLUDE_PATHS = util.CMSIS_INCLUDE_PATHS
 
 
-# Model/Data util
-def get_sample_points(n, has_simd_strategy):
-    """Grabs a single input/label pair from MNIST"""
-    ctx = mx.cpu()
-    # Load a random image from the test dataset
-    sample_data = mx.gluon.data.DataLoader(
-            mx.gluon.data.vision.CIFAR10(train=False),
-            1,
-            shuffle=False)
-
-    samples = []
-    for i, (data, label) in zip(range(n), sample_data):
-        if i == n:
-            break
-        data_np = np.copy(data.as_in_context(ctx).asnumpy())
-        # gluon data is in NHWC format
-        shape = util.LabelledShape(dim_iter=zip('NHWC', data_np.shape), dtype='uint8')
-        data_nt = util.LabelledTensor(data_np, shape)
-
-        label = int(label.asnumpy()[0])
-        samples.append({'data': data_nt, 'label': label})
-    return samples
-
-
 # CMSIS config
-CIFAR10_SRC_PATH = f'{util.get_repo_root()}/cmsis_src/cmsis_cifar10_cnn/cmsis_cifar10_cnn_tfl.c'
+CIFAR10_SRC_PATH = f'{util.get_repo_root()}/cmsis_src/cmsis_cifar10_cnn/cmsis_cifar10_cnn.c'
 CIFAR10_INCLUDE_PATH = f'{util.get_repo_root()}/cmsis_src/cmsis_cifar10_cnn'
 CMSIS_SRC_PATHS = [
     f'{util.CMSIS_NN_PATH}/CMSIS/NN/Source/ActivationFunctions/arm_relu_q7.c',
@@ -191,6 +167,14 @@ def eval_cmsis(args, target, samples):
             lib_headers=util.CMSIS_HEADERS,
             lib_include_paths=util.CMSIS_INCLUDE_PATHS + [CIFAR10_INCLUDE_PATH])
 
+        funcs = collections.OrderedDict([
+#            ('cifar10', util.LabelledShape(N=1, H=32, W=32, C=32, dtype='int8')),
+#            ('conv2', util.LabelledShape(N=1, H=16, W=16, C=32, dtype='int8')),
+#            ('conv3', util.LabelledShape(N=10, dtype='int8')),
+#            ('cifar10', util.LabelledShape(N=1, X=10, dtype='int8')),
+            ('arm_cifar10_cnn_wrapper', util.LabelledShape(N=1, X=10, dtype='int8')),
+        ])
+        ctx = tvm.micro_dev(0)
         LOGGER.info('[CMSIS-q7]')
 
         results = []
@@ -224,7 +208,7 @@ def eval_cmsis(args, target, samples):
             # LOGGER.info(f'  prediction was {prediction}')
             # LOGGER.info(f'  actual was {label}')
 
-            results.append(cmsis_output_np)
+            results.append(cmsis_output_np[0])
             #results.append(np.array([0] * 10))
 
     return results
