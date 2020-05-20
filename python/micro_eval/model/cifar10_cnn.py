@@ -1,11 +1,16 @@
 import collections
 import json
+import logging
 import numpy as np
 
 import tvm
 from tvm import relay
 
 from micro_eval import util
+from . import CompiledModel, TunableModel
+
+
+_LOG = logging.getLogger(__name__)
 
 
 CIFAR10_CLASSES = ['Plane', 'Car', 'Bird', 'Cat', 'Deer', 'Dog', 'Frog', 'Horse', 'Ship', 'Truck']
@@ -86,44 +91,103 @@ def _load_cmsis_params(mod, param_shapes):
     return params
 
 
-def gen_cifar10_cnn(data_layout, kernel_layouts, op_strategy='direct', use_random_params=False):
-    # kernel layouts are specified per conv, but if only a single layout is
-    # passed, that layout is used for all convs
-    if isinstance(kernel_layouts, str):
-        kernel_layouts = [kernel_layouts] * 3
-    # TODO change relay/op/tensor/unary.cc _make.clip to accept exprs instead of doubles
-    # TODO discrepancies between outputs might be a result of the bias_add op
-    # not matching the semantics of the CMSIS bias add.
+class Cifar10Cnn(TunableModel):
 
-    data_shape = util.LabelledShape.from_dims_and_layout(dict(N=1, C=3, H=32, W=32), data_layout, dtype='uint8')
-    conv0_weight_shape = util.LabelledShape.from_dims_and_layout(dict(H=5, W=5, I=3, O=32), kernel_layouts[0], dtype='int8')
-    if op_strategy in ('direct_simd', 'partial_im2col'):
-        # to fit our SIMD intrinsic, we make the 'C' dimension a multiple of 4
-        data_shape = util.LabelledShape.from_dims_and_layout(dict(N=1, C=4, H=32, W=32), data_layout, dtype='uint8')
-        conv0_weight_shape = util.LabelledShape.from_dims_and_layout(dict(H=5, W=5, O=32, I=4), kernel_layouts[0], dtype='int8')
-    print('data_shape', data_shape)
-    print('conv0_weight_shape', conv0_weight_shape)
+    # Kernel layouts, keyed by op implementation name. Valid for micro_dev target only, on x86 defaults
+    # to HWIO due to broader support for data layouts.
+    ARM_KERNEL_LAYOUTS = {
+        'direct': 'HWIO',
+        'direct_simd': 'HWOI',
+    }
 
-    param_shapes = collections.OrderedDict([
-        ('data', data_shape),
-        ('mean_data', data_shape),
-        ('conv0_weight', conv0_weight_shape),
-        ('conv0_bias', util.LabelledShape(B=32, dtype='int8')),
-        ('conv1_weight', util.LabelledShape.from_dims_and_layout(dict(O=32, I=32, H=5, W=5), kernel_layouts[1], dtype='int8')),
-        ('conv1_bias', util.LabelledShape(B=32, dtype='int8')),
-        ('conv2_weight', util.LabelledShape.from_dims_and_layout(dict(O=64, I=32, H=5, W=5), kernel_layouts[2], dtype='int8')),
-        ('conv2_bias', util.LabelledShape(B=64, dtype='int8')),
-        ('dense0_weight', util.LabelledShape(O=10, I=1024, dtype='int8')),
-        ('dense0_bias', util.LabelledShape(B=10, dtype='int8')),
-    ])
-    bias_add_axis = data_layout.index('C')
-    params = []
-    for p, s in param_shapes.items():
-        joined_shape = ', '.join(str(x) for x in s.shape)
-        params.append(f'        %{p}: Tensor[({joined_shape}), {s.dtype}]')
-    param_args = ',\n'.join(params)
-    print('params', param_args)
-    mod = relay.fromtext(f"""
+    DATA_LAYOUT = 'NHWC'
+
+    def _kernel_layouts(self, target):
+        conv_op_impl = self.config.get('conv_op_impl', ['direct_simd'] * 3)
+        assert len(conv_op_impl) == 3, f'Expect 3 op impls in conv_op_impl, have {conv_op_impl!r}'
+
+        kernel_layouts = []
+        for strat in conv_op_impl:
+            if target == 'x86':
+                kernel_layouts.append('HWIO')
+            else:
+                kernel_layouts.append(self.ARM_KERNEL_LAYOUTS[strat])
+        return kernel_layouts
+
+    def build_model(self, target):
+        kernel_layouts = self._kernel_layouts(target)
+
+        # TODO change relay/op/tensor/unary.cc _make.clip to accept exprs instead of doubles
+        # TODO discrepancies between outputs might be a result of the bias_add op
+        # not matching the semantics of the CMSIS bias add.
+        data_shape = util.LabelledShape.from_dims_and_layout(
+            dict(N=1, C=3, H=32, W=32), data_layout, dtype='uint8')
+        conv0_weight_shape = util.LabelledShape.from_dims_and_layout(
+            dict(H=5, W=5, I=3, O=32), kernel_layouts[0], dtype='int8')
+
+        if any(l in ('direct_simd', 'partial_im2col') for l in kernel_layouts):
+            # to fit our SIMD intrinsic, we make the 'C' dimension a multiple of 4
+            data_shape = util.LabelledShape.from_dims_and_layout(
+                dict(N=1, C=4, H=32, W=32), data_layout, dtype='uint8')
+            conv0_weight_shape = util.LabelledShape.from_dims_and_layout(
+                dict(H=5, W=5, O=32, I=4), kernel_layouts[0], dtype='int8')
+
+        _LOG.debug('data_shape %r', data_shape)
+        _LOG.debug('conv0_weight_shape %r', conv0_weight_shape)
+
+        param_shapes = collections.OrderedDict([
+            ('data', data_shape),
+            ('mean_data', data_shape),
+            ('conv0_weight', conv0_weight_shape),
+            ('conv0_bias', util.LabelledShape(B=32, dtype='int8')),
+            ('conv1_weight', util.LabelledShape.from_dims_and_layout(
+                dict(O=32, I=32, H=5, W=5), kernel_layouts[1], dtype='int8')),
+            ('conv1_bias', util.LabelledShape(B=32, dtype='int8')),
+            ('conv2_weight', util.LabelledShape.from_dims_and_layout(
+                dict(O=64, I=32, H=5, W=5), kernel_layouts[2], dtype='int8')),
+            ('conv2_bias', util.LabelledShape(B=64, dtype='int8')),
+            ('dense0_weight', util.LabelledShape(O=10, I=1024, dtype='int8')),
+            ('dense0_bias', util.LabelledShape(B=10, dtype='int8')),
+        ])
+
+        bias_add_axis = data_layout.index('C')
+        params = []
+        for p, s in param_shapes.items():
+            joined_shape = ', '.join(str(x) for x in s.shape)
+            params.append(f'        %{p}: Tensor[({joined_shape}), {s.dtype}]')
+        param_args = ',\n'.join(params)
+        _LOG.debug('params %s', param_args)
+
+        mod = relay.fromtext(CIFAR10_RELAY_MODEL)
+        if use_random_params:
+            params = _gen_random_params(mod, data_layout, kernel_layouts)
+        else:
+            params = _load_cmsis_params(mod, param_shapes)
+
+        return CompiledModel(
+            mod, params, 'main', {'data_layout': self.DATA_LAYOUT, 'kernel_layouts': kernel_layouts})
+
+    def extract_tunable_tasks(self, target):
+
+        with tvm.target.build_config(opt_level=3, disable_vectorize=True):
+            tasks = autotvm.task.extract_from_program(mod.mod['main'], mod.params, TARGET)
+            assert len(tasks) == 3
+            return tasks
+
+    def get_autotvm_measure_option(self, num_runners : int, tracker_host : str, tracker_port : int,
+                                 tracker_key : str, task : tvm.autotvm.task.Task):
+        builder = autotvm.LocalBuilder(build_func=model_inst.get_build_func(), n_parallel=num_servers)
+        builder.build_kwargs.setdefault('build_option', {})['disable_vectorize'] = True
+        runner = autotvm.RPCRunner(tracker_key, tracker_host, tracker_port, n_parallel=num_servers,
+                                   number=1, repeat=1, timeout=TIMEOUT_SEC)
+
+        return autotvm.measure_option(builder=builder, runner=runner)
+
+    def get_config_str(self, target):
+        return '-'.join(self._kernel_layouts(target))
+
+
+CIFAR10_RELAY_MODEL = f"""
     v0.0.4
     def @main({param_args}) {{
         %0 = cast(cast(%data, "int16") - cast(%mean_data, "int16"), "int8");
@@ -188,10 +252,4 @@ def gen_cifar10_cnn(data_layout, kernel_layouts, op_strategy='direct', use_rando
       %22 = right_shift(cast(%21, "int32"), 5);
       cast(%22, "int8")
     }}
-    """)
-    if use_random_params:
-        params = _gen_random_params(mod, data_layout, kernel_layouts)
-    else:
-        params = _load_cmsis_params(mod, param_shapes)
-
-    return mod, params
+"""
