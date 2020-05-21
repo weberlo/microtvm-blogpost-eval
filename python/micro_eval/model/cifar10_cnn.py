@@ -4,14 +4,27 @@ import logging
 import numpy as np
 
 import tvm
-from tvm import relay
+import tvm.relay
+import tvm.micro
+from tvm.micro.device import MemConstraint
 
 from micro_eval import util
-from . import CompiledModel, TunableModel
+from . import CompiledModel, LoweredModule, TunableModel
 
 
 _LOG = logging.getLogger(__name__)
 
+
+HEADERS = [
+    'cmsis_gcc.h',
+    'arm_math.h',
+    'arm_nnsupportfunctions.h'
+]
+INCLUDE_PATHS = [
+    f'{util.CMSIS_NN_PATH}/CMSIS/DSP/Include',
+    f'{util.CMSIS_NN_PATH}/CMSIS/NN/Include',
+    f'{util.CMSIS_ST_PATH}',
+]
 
 CIFAR10_CLASSES = ['Plane', 'Car', 'Bird', 'Cat', 'Deer', 'Dog', 'Frog', 'Horse', 'Ship', 'Truck']
 
@@ -62,16 +75,18 @@ _CMSIS_PARAM_SHAPES = {
 }
 
 
-def _load_cmsis_params(mod, param_shapes):
-    with open(f'{util.get_repo_root()}/data/cifar10_cnn_params.json') as f:
+def _load_cmsis_params(mod, param_file, param_shapes):
+    with open(param_file) as f:
         cmsis_params = json.load(f)
 
     params = {}
     for formal_param in mod['main'].params[1:]:  # exclude data
         name = formal_param.name_hint
-        print('name', name, _CMSIS_PARAM_SHAPES[name].dtype, len(cmsis_params[name]))
+        _LOG.debug('name %r %r %r', name, _CMSIS_PARAM_SHAPES[name].dtype, len(cmsis_params[name]))
         cmsis_tensor = util.LabelledTensor(
-            data=np.array(cmsis_params[name], dtype=_CMSIS_PARAM_SHAPES[name].dtype, copy=True).reshape(_CMSIS_PARAM_SHAPES[name].shape),
+            data=np.array(cmsis_params[name],
+                          dtype=_CMSIS_PARAM_SHAPES[name].dtype, copy=True).reshape(
+                              _CMSIS_PARAM_SHAPES[name].shape),
             shape=_CMSIS_PARAM_SHAPES[name])
         if name == 'conv0_bias':
             cmsis_tensor = _CMSIS_PARAM_SHAPES[name].gen_zero_tensor()
@@ -102,33 +117,68 @@ class Cifar10Cnn(TunableModel):
 
     DATA_LAYOUT = 'NHWC'
 
-    def _kernel_layouts(self, target):
+    @property
+    def _kernel_layouts(self):
         conv_op_impl = self.config.get('conv_op_impl', ['direct_simd'] * 3)
         assert len(conv_op_impl) == 3, f'Expect 3 op impls in conv_op_impl, have {conv_op_impl!r}'
 
         kernel_layouts = []
         for strat in conv_op_impl:
-            if target == 'x86':
+            if self.ctx_str == 'cpu':
                 kernel_layouts.append('HWIO')
             else:
                 kernel_layouts.append(self.ARM_KERNEL_LAYOUTS[strat])
         return kernel_layouts
 
-    def build_model(self, target):
-        kernel_layouts = self._kernel_layouts(target)
+    @property
+    def _is_simd(self):
+        return any(l == 'HWOI' for l in self._kernel_layouts)
+
+    interp_lower_config = tvm.relay.build_config(opt_level=3, disabled_pass={"AlterOpLayout"})
+
+    def _lower_cpu(self, compiled_model):
+        with tvm.relay.build_config(opt_level=3, disabled_pass={"AlterOpLayout"}):
+            return LoweredModule(*tvm.relay.build(compiled_model.ir_mod[compiled_model.entry_point],
+                                                  target="llvm", params=compiled_model.params))
+
+    def _lower_micro_dev(self, compiled_model, dev_config):
+        with tvm.target.build_config(opt_level=3, disable_vectorize=True):
+            graph, c_mod, params = tvm.relay.build(
+                compiled_model.ir_mod[compiled_model.entry_point], target=self.target,
+                params=compiled_model.params)
+
+        _LOG.info('Building C module and programming on device...')
+        micro_mod = tvm.micro.create_micro_mod(
+            c_mod, dev_config, lib_headers=HEADERS, lib_include_paths=INCLUDE_PATHS)
+
+        return LoweredModule(graph, micro_mod, params)
+
+    def lower_model(self, compiled_model, dev_config=None):
+        # Normally we would examine target to determine how to lower, but target does not currently
+        # adequately describe the runtime environment.
+        if self.ctx_str == 'cpu':
+            return self._lower_cpu(compiled_model)
+        elif self.ctx_str == 'micro_dev':
+            assert dev_config is not None, 'dev_config required to lower for micro_dev'
+            return self._lower_micro_dev(compiled_model, dev_config)
+        else:
+            assert False, f"don't know how to lower for context {self.ctx_str}"
+
+    def build_model(self):
+        kernel_layouts = self._kernel_layouts
 
         # TODO change relay/op/tensor/unary.cc _make.clip to accept exprs instead of doubles
         # TODO discrepancies between outputs might be a result of the bias_add op
         # not matching the semantics of the CMSIS bias add.
         data_shape = util.LabelledShape.from_dims_and_layout(
-            dict(N=1, C=3, H=32, W=32), data_layout, dtype='uint8')
+            dict(N=1, C=3, H=32, W=32), self.DATA_LAYOUT, dtype='uint8')
         conv0_weight_shape = util.LabelledShape.from_dims_and_layout(
             dict(H=5, W=5, I=3, O=32), kernel_layouts[0], dtype='int8')
 
-        if any(l in ('direct_simd', 'partial_im2col') for l in kernel_layouts):
+        if self._is_simd:
             # to fit our SIMD intrinsic, we make the 'C' dimension a multiple of 4
             data_shape = util.LabelledShape.from_dims_and_layout(
-                dict(N=1, C=4, H=32, W=32), data_layout, dtype='uint8')
+                dict(N=1, C=4, H=32, W=32), self.DATA_LAYOUT, dtype='uint8')
             conv0_weight_shape = util.LabelledShape.from_dims_and_layout(
                 dict(H=5, W=5, O=32, I=4), kernel_layouts[0], dtype='int8')
 
@@ -150,7 +200,7 @@ class Cifar10Cnn(TunableModel):
             ('dense0_bias', util.LabelledShape(B=10, dtype='int8')),
         ])
 
-        bias_add_axis = data_layout.index('C')
+        bias_add_axis = self.DATA_LAYOUT.index('C')
         params = []
         for p, s in param_shapes.items():
             joined_shape = ', '.join(str(x) for x in s.shape)
@@ -158,36 +208,106 @@ class Cifar10Cnn(TunableModel):
         param_args = ',\n'.join(params)
         _LOG.debug('params %s', param_args)
 
-        mod = relay.fromtext(CIFAR10_RELAY_MODEL)
-        if use_random_params:
+        mod = tvm.relay.fromtext(CIFAR10_RELAY_MODEL.format(
+            bias_add_axis=bias_add_axis,
+            data_layout=self.DATA_LAYOUT,
+            kernel_layouts=kernel_layouts,
+            param_args=param_args))
+        if self.config.get('use_random_params', False):
             params = _gen_random_params(mod, data_layout, kernel_layouts)
         else:
-            params = _load_cmsis_params(mod, param_shapes)
+            params = _load_cmsis_params(mod, self.config.relpath('parameter_file'), param_shapes)
 
         return CompiledModel(
-            mod, params, 'main', {'data_layout': self.DATA_LAYOUT, 'kernel_layouts': kernel_layouts})
+            self.target, mod, params, 'main',
+            {'data_layout': self.DATA_LAYOUT, 'kernel_layouts': kernel_layouts})
 
-    def extract_tunable_tasks(self, target):
-
+    def extract_tunable_tasks(self, compiled_model):
         with tvm.target.build_config(opt_level=3, disable_vectorize=True):
-            tasks = autotvm.task.extract_from_program(mod.mod['main'], mod.params, TARGET)
-            assert len(tasks) == 3
-            return tasks
+            tasks = autotvm.task.extract_from_program(
+                compiled_model.model[compiled_model.entry_point],
+                compiled_model.params,
+                self.target,
+                ops=[tvm.relay.op.nn.conv2d])
+
+        assert len(tasks) == 3
+        return tasks
 
     def get_autotvm_measure_option(self, num_runners : int, tracker_host : str, tracker_port : int,
                                  tracker_key : str, task : tvm.autotvm.task.Task):
-        builder = autotvm.LocalBuilder(build_func=model_inst.get_build_func(), n_parallel=num_servers)
+        builder = autotvm.LocalBuilder(
+            build_func=tvm.micro.cross_compiler(
+                OBJ_BUILD_CONFIG,
+                tvm.micro.LibType.OPERATOR,
+                lib_headers=HEADERS,
+                lib_include_paths=INCLUDE_PATHS),
+            n_parallel=num_servers)
         builder.build_kwargs.setdefault('build_option', {})['disable_vectorize'] = True
         runner = autotvm.RPCRunner(tracker_key, tracker_host, tracker_port, n_parallel=num_servers,
-                                   number=1, repeat=1, timeout=TIMEOUT_SEC)
+                                   number=1, repeat=1, timeout=0)
 
         return autotvm.measure_option(builder=builder, runner=runner)
 
-    def get_config_str(self, target):
-        return '-'.join(self._kernel_layouts(target))
+    def get_config_str(self):
+        return '-'.join(self._kernel_layouts())
+
+    WORKSPACE_SIZE_BYTES_BY_TASK_INDEX = [132000, 132000, 10000]
+
+    def dataset_generator_name(self):
+        return 'cifar10'
+
+    def section_constraints(self, task_index=None):
+        if task_index is None:
+            return collections.OrderedDict([
+                ('text', (23000, MemConstraint.ABSOLUTE_BYTES)),
+                ('rodata', (300, MemConstraint.ABSOLUTE_BYTES)),
+                ('data', (0x80, MemConstraint.ABSOLUTE_BYTES)),
+                ('bss', (820, MemConstraint.ABSOLUTE_BYTES)),
+                ('args', (4496, MemConstraint.ABSOLUTE_BYTES)),
+                ('heap', (100.0, MemConstraint.WEIGHT)),
+                ('workspace', (145000, MemConstraint.ABSOLUTE_BYTES)),
+                ('stack', (128, MemConstraint.ABSOLUTE_BYTES)),
+            ])
+
+        if task.name == 'conv2d_direct.arm_cpu':
+            return collections.OrderedDict([
+                ('text', (28000, MemConstraint.ABSOLUTE_BYTES)),
+                ('rodata', (100, MemConstraint.ABSOLUTE_BYTES)),
+                ('data', (100, MemConstraint.ABSOLUTE_BYTES)),
+                ('bss', (800, MemConstraint.ABSOLUTE_BYTES)),
+                ('args', (4096, MemConstraint.ABSOLUTE_BYTES)),
+                ('heap', (100.0, MemConstraint.WEIGHT)),
+                ('workspace', (self.WORKSPACE_SIZE_BYTES_BY_TASK_INDEX[task_index],
+                               MemConstraint.ABSOLUTE_BYTES)),
+                ('stack', (128, MemConstraint.ABSOLUTE_BYTES)),
+            ])
+        elif task.name == 'conv2d_direct_simd.arm_cpu':
+            return collections.OrderedDict([
+                ('text', (23000, MemConstraint.ABSOLUTE_BYTES)),
+                ('rodata', (100, MemConstraint.ABSOLUTE_BYTES)),
+                ('data', (100, MemConstraint.ABSOLUTE_BYTES)),
+                ('bss', (800, MemConstraint.ABSOLUTE_BYTES)),
+                ('args', (4096, MemConstraint.ABSOLUTE_BYTES)),
+                ('heap', (100.0, MemConstraint.WEIGHT)),
+                ('workspace', (self.WORKSPACE_SIZE_BYTES_BY_TASK_INDEX[task_index],
+                               MemConstraint.ABSOLUTE_BYTES)),
+                ('stack', (128, MemConstraint.ABSOLUTE_BYTES)),
+            ])
+        else:
+            assert False, f"don't know how to generate section constraints for {task.task_name}"
+
+    def adapt_sample_inputs(self, sample):
+        data_nt = sample['data']
+        if self._is_simd:
+            data_nt = data_nt.resize(data_nt.shape.as_template_for(C=4))
+
+        return {'data': data_nt}
+
+    def adapt_model_outputs(self, outputs):
+        return {'label': outputs['label'][0]}
 
 
-CIFAR10_RELAY_MODEL = f"""
+CIFAR10_RELAY_MODEL = """
     v0.0.4
     def @main({param_args}) {{
         %0 = cast(cast(%data, "int16") - cast(%mean_data, "int16"), "int8");

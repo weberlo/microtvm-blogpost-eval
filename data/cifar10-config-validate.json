@@ -1,0 +1,4 @@
+{
+    "use_random_params": false,
+    "parameter_file": "cifar10_cnn_params.json"
+}

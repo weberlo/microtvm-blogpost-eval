@@ -36,17 +36,6 @@ def get_repo_root():
 
 CMSIS_NN_PATH = f'{get_repo_root()}/3rdparty/CMSIS_5'
 CMSIS_ST_PATH = f'{get_repo_root()}/3rdparty/STM32CubeF7/Drivers/CMSIS'
-CMSIS_HEADERS = [
-    'cmsis_gcc.h',
-    'arm_math.h',
-    'arm_nnsupportfunctions.h'
-]
-CMSIS_INCLUDE_PATHS = [
-    f'{CMSIS_NN_PATH}/CMSIS/Core/Include',
-    f'{CMSIS_NN_PATH}/CMSIS/DSP/Include',
-    f'{CMSIS_NN_PATH}/CMSIS/NN/Include',
-    f'{CMSIS_ST_PATH}',
-]
 
 
 if os.environ.get('CMSIS_ST_PATH', None) not in (None, CMSIS_ST_PATH):
@@ -428,15 +417,6 @@ def benchmark_micro_func(sess, micro_func, args, num_trials):
         micro_func(*args)
     ctx.sync()
     return (sess.get_last_batch_time() / num_trials)
-
-
-class MockCMod:
-    def __init__(self, src_path):
-        self.src_path = src_path
-
-    def export_library(self, out_obj_path, fcompile=None):
-        assert fcompile is not None
-        fcompile(out_obj_path, self.src_path)
 
 
 def check_conv2d_output(

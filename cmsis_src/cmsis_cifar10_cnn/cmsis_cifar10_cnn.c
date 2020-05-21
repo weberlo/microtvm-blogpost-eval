@@ -81,7 +81,7 @@ int32_t run_nn(q7_t* input_data, q7_t* output_data) {
   return 0;
 }
 
-int32_t arm_cifar10_cnn_wrapper(TVMValue* arg_values, int* arg_type_codes, int32_t num_args) {
+int32_t cifar10(TVMValue* arg_values, int* arg_type_codes, int32_t num_args) {
   DLTensor* data_tensor = (DLTensor*) arg_values[0].v_handle;
   DLTensor* output_tensor = (DLTensor*) arg_values[1].v_handle;
 

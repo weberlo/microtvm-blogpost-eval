@@ -141,47 +141,6 @@ TUNE_OPS = [relay.op.nn.conv2d]
 # disable timeouts because JTAG is slow
 TIMEOUT = 0
 
-#############
-# Debugging #
-#############
-# NOTE in the autotvm setting, this is only useful if there's only one RPC server running
-# reset_gdbinit(DEV_CONFIG)
-
-###################
-# Autotuning/Eval #
-###################
-
-#def gen_conv2d_relay():
-#    IN_DTYPE = 'int8'
-#    OUT_DTYPE = 'int32'
-#    N, H, W, CO, CI = 1, 32, 32, 16, 3
-#    KH, KW = 5, 5
-#    STRIDES, PADDING, DILATION = (1, 1), (2, 2), (1, 1)
-#    KERNEL_SIZE = (KH, KW)
-#    DATA_SHAPE = (N, CI, H, W)
-#    KERNEL_SHAPE = (CO, CI, KH, KW)
-#    BIAS_SHAPE = (CO,)
-#    OUTPUT_SHAPE = (N, H, W, CO)
-#
-#    #assert False, "we might need to use NCHW for micro and interp, because the bias add causes problems"
-#    # Construct Relay program (used for micro and interpreter eval).
-#    data_var = relay.var("data", shape=DATA_SHAPE, dtype=IN_DTYPE)
-#    kernel_var = relay.var("kernel", shape=KERNEL_SHAPE, dtype=IN_DTYPE)
-#    bias_var = relay.var("bias", shape=BIAS_SHAPE, dtype=OUT_DTYPE)
-#    conv_expr = relay.nn.conv2d(
-#            data_var, kernel_var,
-#            kernel_size=KERNEL_SIZE,
-#            strides=STRIDES,
-#            padding=PADDING,
-#            dilation=DILATION,
-#            channels=CO,
-#            data_layout=LAYOUT,
-#            out_layout=LAYOUT,
-#            out_dtype=OUT_DTYPE)
-#    func = relay.Function(relay.analysis.free_vars(conv_expr), conv_expr)
-#    mod = relay.Module.from_expr(func)
-#    mod = transform.InferType()(mod)
-#    return mod
 
 def get_num_devices(dev_id):
     conn = rpc.connect_tracker(TRACKER_ADDR, TRACKER_PORT)
@@ -370,8 +329,6 @@ def write_rpc_server_config(template_key, config_base, num_ports):
 
 
 def get_tasks(args):
-#    data_layout = 'NHWC'
-#    kernel_layout = 'HWOI'
     mod = model_util.build_relay_mod(args.cifar10_conv_op_impl, use_random_params=True)
 
     with tvm.target.build_config(opt_level=3, disable_vectorize=True):
@@ -426,9 +383,7 @@ def _cmd_analyze(args):
 def main():
     args = parse_args()
     globals()[f'_cmd_{args.action}'](args)
-#    assert False, 'make it so you\'re using all 3 tasks again'
 
 
 if __name__ == '__main__':
     main()
-    #assert False, "Task extraction is stateful and whichever eval is run first sets the schedule to be used on subsequent evals"

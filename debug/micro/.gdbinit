@@ -1,7 +1,7 @@
 #layout src
 target remote localhost:3333
-add-symbol-file /var/folders/9y/3j808g591ln3kys4qpyl3qmc0000gn/T/tvm-debug-mode-tempdirs/2020-05-19T09-18-26___uq8lq94f/00011/relocated.obj
-add-symbol-file /var/folders/9y/3j808g591ln3kys4qpyl3qmc0000gn/T/tvm-debug-mode-tempdirs/2020-05-19T09-18-26___uq8lq94f/00002/relocated.obj
+add-symbol-file /var/folders/9y/3j808g591ln3kys4qpyl3qmc0000gn/T/tmpxotia1ft/relocated.obj
+add-symbol-file /var/folders/9y/3j808g591ln3kys4qpyl3qmc0000gn/T/tmpwm_rfw2n/relocated.obj
 set $pc = UTVMInit
 break UTVMDone
 
