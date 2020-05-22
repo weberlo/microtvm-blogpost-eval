@@ -1,4 +1,4 @@
-![microTVM logo](logo.png "MicroTVM CIFAR10-CNN Demo")
+# microTVM CIFAR10-CNN Demo
 
 microTVM is an effort to run TVM on bare-metal microcontrollers. You can read more about the current
 design in the original [microTVM RFC](https://github.com/apache/incubator-tvm/issues/2563). This repo
@@ -9,8 +9,13 @@ https://www.st.com/en/evaluation-tools/nucleo-f746zg.html).
 
 * Linux machine (OS X is also unofficially supported, and will be officially supported in the future)
 * [STM Nucleo-F746ZG development board](https://www.st.com/en/evaluation-tools/nucleo-f746zg.html)
-** Autotuning can be sped up by adding more of these development boards.
+    * Autotuning can be sped up by adding more of these development boards.
 * micro USB cable
+
+## Software you will need
+
+* A recent version of Linux (TVM tests against Ubuntu 18.04).
+* Python 3.6+
 
 ## Getting Started
 
@@ -22,15 +27,17 @@ https://www.st.com/en/evaluation-tools/nucleo-f746zg.html).
 
 3. Build OpenOCD. Here we have chosen a specific commit that works with the Nucleo board, but
 
-    $ tools/patch-openocd.sh  # If using clang, fix a compiler error.
-    $ cd 3rdparty/openocd
-    # First, install dependencies listed in the README for your platform.
-    $ ./bootstrap
-    $ ./configure --prefix=$(pwd)/prefix
-    $ make && make install
+        $ tools/patch-openocd.sh  # If using clang, fix a compiler error.
+        $ cd 3rdparty/openocd
+
+        # First, install dependencies listed in the README for your platform.
+        $ ./bootstrap
+        $ ./configure --prefix=$(pwd)/prefix
+        $ make && make install
 
 4. Install prerequisites:
-    $ apt-get install gcc-arm-none-eabi
+
+       $ apt-get install gcc-arm-none-eabi
 
 5. Configure hardware and external binaries.
 
@@ -39,10 +46,10 @@ https://www.st.com/en/evaluation-tools/nucleo-f746zg.html).
 
 6. Setup virtualenv. Use `requirements.txt` and `constraints.txt`.
 
-    $ python -mvenv _venv
-    $ _venv/bin/activate
-    $ pip install -r requirements.txt -c constraints.txt
-    $ export PYTHONPATH=$(pwd)/python:$PYTHONPATH
+        $ python3 -mvenv _venv
+        $ . _venv/bin/activate
+        $ pip install -r requirements.txt -c constraints.txt
+        $ export PYTHONPATH=$(pwd)/python:$PYTHONPATH
 
 ## Run untuned models
 
@@ -150,11 +157,11 @@ some of the problems you can run into, and how to solve them.
 3. Try running openocd separately:
     1. First, generate the _transport config_:
 
-        $ python -m micro_eval.bin.autotune cifar10_cnn:micro_dev rpc_dev_config
+            $ python -m micro_eval.bin.autotune cifar10_cnn:micro_dev rpc_dev_config
 
     2. Now, try launching openocd:
 
-        $ 3rdparty/openocd/prefix/bin/openocd -f microrpc-dev-config/dev-0/openocd.cfg
+            $ 3rdparty/openocd/prefix/bin/openocd -f microrpc-dev-config/dev-0/openocd.cfg
 
     Troubleshoot this until it connects to the device succesfully.
 
@@ -162,8 +169,8 @@ some of the problems you can run into, and how to solve them.
 
 1. Double check a tracker/rpc server is not still running:
 
-    $ ps ax | grep tvm.exec.rpc_tracker
-    $ ps ax | grep tvm.exec.rpc_server
+        $ ps ax | grep tvm.exec.rpc_tracker
+        $ ps ax | grep tvm.exec.rpc_server
 
     Kill them if so.
 

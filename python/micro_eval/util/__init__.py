@@ -1,8 +1,9 @@
-from __future__ import annotations
+#from __future__ import annotations
 from collections import Iterable, OrderedDict
 import json
 import logging
 import os
+import sys
 import subprocess
 import typing
 
@@ -60,7 +61,7 @@ def get_logger(log_file_name):
 class LabelledTensor:
     """A tensor with labelled axes."""
 
-    def __init__(self, data: np.ndarray, shape: LabelledShape):
+    def __init__(self, data: np.ndarray, shape):
         """Wraps an ndarray with a given string layout.
 
         Parameters
@@ -76,7 +77,7 @@ class LabelledTensor:
         self.shape = shape
         assert isinstance(shape, LabelledShape)
 
-    def resize(self, other: LabelledShape):
+    def resize(self, other):
         """Resize dimensions (per numpy.resize) and potentially transpose.
 
         Parameters
@@ -97,7 +98,7 @@ class LabelledTensor:
         zeroes[assign_shape] = intermediate.data
         return LabelledTensor(zeroes, other) #np.resize(intermediate.data, other.shape), other)
 
-    def transpose(self, other: LabelledShape):
+    def transpose(self, other):
         mapping = self.shape.make_transpose_mapping(other)
         return LabelledTensor(np.transpose(self.data, mapping), other)
 
@@ -113,9 +114,9 @@ class LabelledShape:
         return cls(dim_iter=((l, dims[l]) for l in layout), dtype=dtype)
 
     def __init__(self,
-                 dims: typing.Union[OrderedDict, NoneType] = None,
-                 dim_iter: typing.Union[typing.Iterable[typing.Tuple[str, int]], NoneType] = None,
-                 dtype: str = None,
+                 dims = None,
+                 dim_iter = None,
+                 dtype = None,
                  **kw):
         if dims is not None:
             self.dims = OrderedDict(dims)
@@ -161,7 +162,7 @@ class LabelledShape:
         assert len(self.dims) == len(layout)
         return LabelledShape(dim_iter=((l, self.dims[l]) for l in layout), dtype=self.dtype)
 
-    def make_transpose_mapping(self, other: LabelledShape):
+    def make_transpose_mapping(self, other):
         assert self.size == other.size
         assert len(self.dims) == len(other.dims)
 
@@ -383,7 +384,7 @@ def benchmark_micro_func(sess, micro_func, args, num_trials):
 
 def check_conv2d_output(
         data_tensor: LabelledTensor, kernel_tensor: LabelledTensor,
-        micro_output_tensor: Labelled_Tensor, strides, padding):
+        micro_output_tensor: LabelledTensor, strides, padding):
     data_nchw_np = data_tensor.with_layout('NCHW').data
     kernel_oihw_np = kernel_tensor.with_layout('OIHW').data
     micro_output_nchw_np = micro_output_tensor.with_layout('NCHW').data
