@@ -3,6 +3,7 @@
 import datetime
 import logging
 import logging.handlers
+import os
 import sys
 import typing
 
@@ -77,7 +78,11 @@ def config(labels : typing.List[str], level : int = logging.INFO, console_only :
   root_logger.addHandler(stream_handler)
 
   if not console_only:
-    file_handler = logging.FileHandler(gen_log_file_name(labels))
+    log_file_path = gen_log_file_name(labels)
+    log_file_dir = os.path.dirname(log_file_path)
+    if not os.path.isdir(log_file_dir):
+      os.makedirs(log_file_dir)
+    file_handler = logging.FileHandler(log_file_path)
     file_handler.setFormatter(logging.Formatter(
       fmt='%(asctime)s.%(msecs)03d %(levelname)s %(filename)s:%(lineno)d %(message)s',
       **shared_kw))
