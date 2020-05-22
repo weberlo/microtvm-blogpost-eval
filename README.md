@@ -1,9 +1,11 @@
-# microTVM CIFAR10-CNN Demo
+![microTVM logo](logo.png)
 
 microTVM is an effort to run TVM on bare-metal microcontrollers. You can read more about the current
 design in the original [microTVM RFC](https://github.com/apache/incubator-tvm/issues/2563). This repo
 shows you how to run CIFAR10-CNN on the host machine and on an [STM Nucleo-F746ZG development board](
 https://www.st.com/en/evaluation-tools/nucleo-f746zg.html).
+
+![microTVM Performance graph](graph.png)
 
 ## Hardware you will need
 
@@ -27,13 +29,14 @@ https://www.st.com/en/evaluation-tools/nucleo-f746zg.html).
 
 3. Build OpenOCD. Here we have chosen a specific commit that works with the Nucleo board, but
 
-        $ tools/patch-openocd.sh  # If using clang, fix a compiler error.
-        $ cd 3rdparty/openocd
-
-        # First, install dependencies listed in the README for your platform.
-        $ ./bootstrap
-        $ ./configure --prefix=$(pwd)/prefix
-        $ make && make install
+```bash
+    $ tools/patch-openocd.sh  # If using clang, fix a compiler error.
+    $ cd 3rdparty/openocd
+    # First, install dependencies listed in the README for your platform.
+    $ ./bootstrap
+    $ ./configure --prefix=$(pwd)/prefix
+    $ make && make install
+```
 
 4. Install prerequisites:
 
