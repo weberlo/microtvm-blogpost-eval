@@ -12,7 +12,6 @@ import warnings
 
 import numpy as np
 
-import terminaltables
 import tvm
 from tvm import autotvm
 from tvm.autotvm.task.space import FallbackConfigEntity
