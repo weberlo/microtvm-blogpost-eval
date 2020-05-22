@@ -99,8 +99,6 @@ class LabelledTensor:
 
     def transpose(self, other: LabelledShape):
         mapping = self.shape.make_transpose_mapping(other)
-        print('mapping', mapping)
-        print('arr', self.data.shape)
         return LabelledTensor(np.transpose(self.data, mapping), other)
 
     def with_layout(self, layout):
@@ -108,46 +106,11 @@ class LabelledTensor:
         return self.transpose(LabelledShape(dims=new_shape_dims, dtype=self.shape.dtype))
 
 
-# class :
-#     def __init__(self, dim_dict: typing.Dict[str, int], dtype=None):
-#         self.dim_dict = dim_dict
-#         if dtype is not None:
-#             self._dtype = dtype
-
-#     def with_layout(self, layout):
-#         layout_list = []
-#         for dim_name in layout:
-#             dim_size = self.dim_dict[dim_name]
-#             layout_list.append((dim_name, dim_size))
-#         return BakedType(layout_list, dtype=getattr(self, '_dtype', None))
-
-#     def gen_rand_tensor(self, low, high) -> NamedTensor:
-#         """Create a tensor with random entries between `low` and `high`.
-
-#         Useful for testing multiple ops with different input layouts.
-#         """
-#         # create a baked type with an arbitrary layout to use its random tensor generation method
-#         return self.with_layout(list(self.dim_dict.keys())).gen_rand_tensor(low, high)
-
-#     def gen_empty(self) -> NamedTensor:
-#         # create a baked type with an arbitrary layout to use its empty tensor generation method
-#         return self.with_layout(list(self.dim_dict.keys())).gen_zero_tensor()
-
-#     @property
-#     def dtype(self):
-#         assert hasattr(self, '_dtype'), 'no dtype has been set'
-#         return self._dtype
-
-
 class LabelledShape:
 
     @classmethod
     def from_dims_and_layout(cls, dims: typing.Dict[str, int], layout: str, dtype: str):
         return cls(dim_iter=((l, dims[l]) for l in layout), dtype=dtype)
-
-#    @classmethod
-#    def from_ordered_kwargs(cls, dtype: str=None, **kw):
-#        return cls(kw.items(), dtype)
 
     def __init__(self,
                  dims: typing.Union[OrderedDict, NoneType] = None,
@@ -281,7 +244,6 @@ def relay_micro_build(func, dev_config, target, params=None, lib_headers=None, l
     micro_mod = micro.create_micro_mod(c_mod, dev_config, lib_headers=lib_headers, lib_include_paths=lib_include_paths)
     ctx = tvm.micro_dev(0)
     if DEBUG_MODE:
-        print('debug mode on')
         dump_root = f'{get_repo_root()}/debug/micro'
         mod = debug_runtime.create(graph, micro_mod, ctx, dump_root=dump_root)
     else:

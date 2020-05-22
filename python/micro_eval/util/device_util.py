@@ -2,6 +2,7 @@
 
 import atexit
 import contextlib
+import copy
 import enum
 import json
 import logging
@@ -10,6 +11,7 @@ import queue
 import re
 import signal
 import subprocess
+import sys
 import threading
 import typing
 
@@ -110,9 +112,12 @@ class ManagedSubprocess:
     self._proc = None
     self._log_workers = []
 
-  def _process_log_events(self, line, log_level, this_log_level, tags):
+    self._log_level_guard = threading.Lock()
+    self._log_level = logging.INFO  # Start at INFO until HEALTHY received.
+
+  def _process_log_events(self, stream_name, line, this_log_level, tags):
     state_transition = None
-    gen = self._log_event_emitter(line)
+    gen = self._log_event_emitter(stream_name, line)
     while True:
       try:
         event_type, event_data = next(gen)
@@ -128,28 +133,27 @@ class ManagedSubprocess:
         assert state_transition is None
         state_transition = event_type
         tags.append(event_type.value)
-        log_level = (logging.DEBUG
-                     if event_type == self.LogEventType.HEALTHY
-                     else logging.WARN)
+        with self._log_level_guard:
+          self._log_level = (logging.DEBUG
+                             if event_type == self.LogEventType.HEALTHY
+                             else logging.WARN)
         if event_type == self.LogEventType.UNHEALTHY:
-          this_log_level = log_level
+          this_log_level = self._log_level
 
-    return log_level, this_log_level, state_transition
+    return this_log_level, state_transition
 
-
-  def _log_worker(self, in_from_proc, out_to_logfile=None):
+  def _log_worker(self, stream_name, in_from_proc, out_to_logfile=None):
     has_ever_been_healthy = False
-    log_level = logging.INFO  # Start at INFO until HEALTHY received.
     try:
       for line in in_from_proc:
-        this_log_level = log_level
-        tags = ['stdio']
+        this_log_level = self._log_level
+        tags = [stream_name]
         state_transition = None
 
         line = str(line, 'utf-8', errors='replace').rstrip('\r\n')
         if self._log_event_emitter:
-          log_level, this_log_level, state_transition = self._process_log_events(
-            line, log_level, this_log_level, tags)
+          this_log_level, state_transition = self._process_log_events(
+            stream_name, line, this_log_level, tags)
 
         self._log.log(this_log_level, '%s: %s %s',
                       self._name, ' '.join('[{}]'.format(t) for t in tags), line)
@@ -227,10 +231,10 @@ class ManagedSubprocess:
       self.LIVE_INSTANCES.append(self)
 
     self._log_workers.append(
-      threading.Thread(target=self._log_worker, args=(self._proc.stdout, out_to_logfile),
+      threading.Thread(target=self._log_worker, args=('stdout', self._proc.stdout, out_to_logfile),
                        name=f'{self._name}.stdout', daemon=True))
     self._log_workers.append(
-      threading.Thread(target=self._log_worker, args=(self._proc.stderr, out_to_logfile),
+      threading.Thread(target=self._log_worker, args=('stderr', self._proc.stderr, out_to_logfile),
                        name=f'{self._name}.stderr', daemon=True))
     for w in self._log_workers:
       w.start()
@@ -279,7 +283,7 @@ class ManagedSubprocess:
       self._log.error('%s: did not stop after %d seconds; killing',
                       self._name, self._stop_timeout_sec)
       self._proc.kill()
-      self._proc.wait(1.0)
+      self._proc.wait()
 
     if threading.current_thread() not in self._log_workers:
       for w in self._log_workers:
@@ -339,7 +343,7 @@ class DeviceTransportLauncher:
              ],
              "openocd_bin_path": "relative/path/to/openocd",
              "openocd_base_port": 6666,   # Base port for launched OpenOCDs
-             "rpc_server_key": "rpc_server_key",
+             "rpc_tracker_key": "rpc_tracker_key",
              "tracker_port": 9190,
              "work_dirtree_root": "relative/path/to/workdir/root"
             }
@@ -359,14 +363,20 @@ class DeviceTransportLauncher:
   def work_dirtree_root(self):
     return self.environment_config.relpath('work_dirtree_root')
 
+  TRACKER_HEALTHY_RE = re.compile('INFO:[^:]+:bind to ')
+
   @classmethod
-  def _tracker_log_event_emitter(cls, line):
-    if line.startswith('INFO:bind to '):
+  def _tracker_log_event_emitter(cls, stream_name, line):
+    if cls.TRACKER_HEALTHY_RE.match(line):
       yield ManagedSubprocess.LogEventType.HEALTHY, None
 
     m = cls._TRACKER_LOG_LINE_RE.match(line)
     if m:
       yield ManagedSubprocess.LogEventType.ADJUST_LOGLEVEL, getattr(logging, m.group(1))
+
+  @property
+  def num_instances(self):
+    return self.runtime_options.get('num_instances', len(self.environment_config['hardware']))
 
   @property
   def _instance_configs(self):
@@ -375,7 +385,7 @@ class DeviceTransportLauncher:
       configs_by_hla_serial = {h['hla_serial']: h for h in instance_configs}
       instance_configs = [configs_by_hla_serial[s] for s in self.runtime_options['hla_serials']]
 
-    num_instances = self.runtime_options.get('num_instances', len(instance_configs))
+    num_instances = self.num_instances
     assert len(instance_configs) >= num_instances, (
       f'Not enough hardware or hla_serials provided: want {num_instances}, '
       f'have {len(instance_configs)}')
@@ -388,8 +398,11 @@ class DeviceTransportLauncher:
 
     base_port = int(self.environment_config['openocd_tcl_base_port'])
     for n, hardware in enumerate(self._instance_configs):
-      config_path = f'{self.work_dirtree_root}/{n}/openocd.cfg'
-      config = config_template.format(**hardware, openocd_tcl_port=base_port + n)
+      config_path = f'{self.work_dirtree_root}/dev-{n}/openocd.cfg'
+      eval_dict = copy.copy(hardware)
+      eval_dict['openocd_tcl_port'] = base_port + n
+      eval_dict['instance_num'] = n
+      config = eval('f' + repr(config_template), {}, eval_dict)
       config_dir = os.path.dirname(config_path)
       if not os.path.exists(config_dir):
         os.makedirs(config_dir)
@@ -397,11 +410,14 @@ class DeviceTransportLauncher:
       with open(config_path, 'w') as config_f:
         config_f.write(config)
 
+  def _rpc_server_config_path(self, n):
+    return f'{self.work_dirtree_root}/dev-{n}/utvm-dev-config.json'
+
   def generate_rpc_server_configs(self,
                                   generate_config_func : typing.Callable,
                                   generate_config_kw : dict = None):
     for n in range(len(self._instance_configs)):
-      config_path = f'{self.work_dirtree_root}/{n}/utvm-dev-config.json'
+      config_path = self._rpc_server_config_path(n)
       openocd_host, openocd_port = self.openocd_host_port_tuple(n)
       config = generate_config_func(openocd_host, openocd_port, **generate_config_kw)
       config_dir = os.path.dirname(config_path)
@@ -409,17 +425,21 @@ class DeviceTransportLauncher:
         os.makedirs(config_dir)
 
       with open(config_path, 'w') as config_f:
-        json.dump(config, config_f)
+        json.dump(config, config_f, indent=2)
 
   @property
   def tracker_host_port_tuple(self):
     return '127.0.0.1', int(self.environment_config.get('tracker_port', 9190))
 
+  @property
+  def rpc_tracker_key(self):
+    return self.environment_config['rpc_tracker_key']
+
   def openocd_host_port_tuple(self, index):
     return '127.0.0.1', int(self.environment_config.get('openocd_base_port', 6666)) + index
 
   def _launch_tracker_and_rpc_servers(self):
-    tracker_host, tracker_port = self.tracker_host_port_tuple()
+    tracker_host, tracker_port = self.tracker_host_port_tuple
     self._tvm_tracker = ManagedSubprocess(
       'tracker',
       [sys.executable, '-m', 'tvm.exec.rpc_tracker',
@@ -431,15 +451,18 @@ class DeviceTransportLauncher:
 
     self._tvm_rpc_servers = []
     for n in range(len(self._instance_configs)):
+      config_path = self._rpc_server_config_path(n)
+      config_dir = os.path.dirname(config_path)
       rpc_server = ManagedSubprocess(
         f'rpc_server.{n}',
         [sys.executable, '-m', 'tvm.exec.rpc_server',
          f'--tracker={tracker_host}:{tracker_port}',
-         f'--key={self.environment_config["rpc_server_key"]}',
+         f'--port={tracker_port + 1 + n}',
+         f'--key={self.rpc_tracker_key}',
          f'--utvm-dev-config={config_path}'],
         cwd=f'{config_dir}',
         log_event_emitter=self._tracker_log_event_emitter,
-        healthy_timeout=5.0)
+        healthy_timeout_sec=5.0)
       rpc_server.start(block_until_healthy=False)
       self._tvm_rpc_servers.append(rpc_server)
 
@@ -449,7 +472,7 @@ class DeviceTransportLauncher:
   LISTEN_RE = re.compile('Info : Listening on port [0-9]+ for tcl connections')
 
   @classmethod
-  def _openocd_event_emitter(cls, line):
+  def _openocd_event_emitter(cls, stream_name, line):
     if cls.LISTEN_RE.match(line):
       yield ManagedSubprocess.LogEventType.HEALTHY, None
 
@@ -487,7 +510,7 @@ class DeviceTransportLauncher:
       openocd = ManagedSubprocess(
         f'openocd.{n}',
         [self.environment_config.relpath('openocd_bin_path'), '-f', 'openocd.cfg'],
-        cwd=f'{self.work_dirtree_root}/{n}',
+        cwd=f'{self.work_dirtree_root}/dev-{n}',
         log_event_emitter=self._openocd_event_emitter,
         healthy_timeout_sec=hardware['connect_timeout_sec'])
       openocd.start(block_until_healthy=False)
@@ -515,7 +538,7 @@ class DeviceTransportLauncher:
       for r in self._tvm_rpc_servers:
         r.block_until_stopped()
 
-      self.tracker.stop()
+      self._tvm_tracker.stop()
 
     for o in self._openocds:
       o.block_until_stopped()

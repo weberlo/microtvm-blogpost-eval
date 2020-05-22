@@ -31,7 +31,7 @@ def gen_log_file_name(labels : typing.List[str]):
   return f'{util.get_repo_root()}/logs/{safe_labels}.{now}.log'
 
 
-def config(labels : typing.List[str], level : int = logging.INFO):
+def config(labels : typing.List[str], level : int = logging.INFO, console_only : bool=False):
   """Configure logging subsystem and create a new logfile; our logging.basicConfig().
 
   Params
@@ -42,11 +42,18 @@ def config(labels : typing.List[str], level : int = logging.INFO):
       A list of strings that describe the program being logged, ordered from least specific to
       most specific. These influence the log file name and/or directory hierarchy (if one becomes
       used later on).
+  console_only : bool
+      If True, don't log to disk. labels is ignored in this case.
   """
   root_logger = logging.getLogger()
   was_configured = root_logger.hasHandlers()
 
   shared_kw = dict(datefmt='%Y-%m-%d %H:%M:%S')
+
+  # want basicConfig(force=True), but only in 3.8, so reproduced here.
+  for h in root_logger.handlers:
+    root_logger.removeHandler(h)
+    h.close()
 
   stream_handler = logging.StreamHandler(sys.stderr)
   stream_handler.setFormatter(colorlog.ColoredFormatter(
@@ -67,19 +74,15 @@ def config(labels : typing.List[str], level : int = logging.INFO):
       },
     },
     **shared_kw))
-  file_handler = logging.FileHandler(gen_log_file_name(labels))
-  file_handler.setFormatter(logging.Formatter(
-    fmt='%(asctime)s.%(msecs)03d %(levelname)s %(filename)s:%(lineno)d %(message)s',
-    **shared_kw))
-
-  # want basicConfig(force=True), but only in 3.8, so reproduced here.
-  for h in root_logger.handlers:
-    root_logger.removeHandler(h)
-    h.close()
-
-
   root_logger.addHandler(stream_handler)
-  root_logger.addHandler(file_handler)
+
+  if not console_only:
+    file_handler = logging.FileHandler(gen_log_file_name(labels))
+    file_handler.setFormatter(logging.Formatter(
+      fmt='%(asctime)s.%(msecs)03d %(levelname)s %(filename)s:%(lineno)d %(message)s',
+      **shared_kw))
+    root_logger.addHandler(file_handler)
+
   root_logger.setLevel(level)
 
   if was_configured:

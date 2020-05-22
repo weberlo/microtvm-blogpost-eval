@@ -16,7 +16,7 @@ class Cifar10DatasetGenerator(DatasetGenerator):
     sample_data = mxnet.gluon.data.DataLoader(
             mxnet.gluon.data.vision.CIFAR10(train=False),
             1,
-            shuffle=self.config.get('shuffle', False))
+            shuffle=self.config.get('shuffle', True))
 
     samples = []
     for i, (data, label) in zip(range(num_samples), sample_data):

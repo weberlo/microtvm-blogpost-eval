@@ -1,0 +1,11 @@
+{"hardware": [
+    {"hla_serial": "<ABCDEF>",
+     "connect_timeout_sec": 5},
+],
+ "openocd_cfg_template": "microrpc-dev-config/openocd.cfg.template",
+ "openocd_bin_path": "</usr/bin/openocd>",
+ "openocd_tcl_base_port": 6666,
+ "rpc_tracker_key": "arm.stf32f746",
+ "tracker_port": 9190,
+ "work_dirtree_root": "microrpc-dev-config"
+}

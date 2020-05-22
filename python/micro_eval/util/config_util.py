@@ -29,9 +29,11 @@ class Config(dict):
     if not isinstance(obj, dict):
       raise ValueError(f'Expected JSON file to contain a dict, got {obj!r}')
 
-    c = cls(obj)
-    c._path = path
-    return c
+    return cls(path, obj)
+
+  def __init__(self, path, data):
+    super(Config, self).__init__(data)
+    self._path = path
 
   def relpath(self, key : typing.Union[str, int, bool]) -> str:
     return os.path.join(os.path.dirname(self._path), self[key])

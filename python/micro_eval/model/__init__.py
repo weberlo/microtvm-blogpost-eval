@@ -112,8 +112,14 @@ class TunableModel(metaclass=abc.ABCMeta):
     raise NotImplementedError()
 
   @abc.abstractmethod
-  def extract_tunable_tasks(self) -> typing.List[tvm.autotvm.task.Task]:
+  def extract_tunable_tasks(self,
+                            compiled_model : CompiledModel) -> typing.List[tvm.autotvm.task.Task]:
     """Extract and return tasks from the model built by build_model.
+
+    Params
+    ------
+    compiled_model : CompiledModel
+        The specific model instance to extract from.
 
     Returns
     -------
@@ -124,7 +130,8 @@ class TunableModel(metaclass=abc.ABCMeta):
 
   @abc.abstractmethod
   def get_autotvm_measure_option(self, num_runners : int, tracker_host : str, tracker_port : int,
-                                 tracker_key : str, task : tvm.autotvm.task.Task) -> typing.Dict:
+                                 tracker_key : str, dev_config : dict, task_index : int,
+                                 task : tvm.autotvm.task.Task) -> typing.Dict:
     """Return autotvm.measure_option result to be used for autotuning this model task.
 
     Params
@@ -137,6 +144,11 @@ class TunableModel(metaclass=abc.ABCMeta):
         Port number for the TVM RPC tracker server.
     tracker_key : str
         Key on the tracker under which the runners register.
+    dev_config : dict
+        Device config, generated from tvm.micro.device....generate_config(). To be used for building
+        this specific task.
+    task_index : int
+        Index of the task being tuned.
     task : tvm.autotvm.task.Task
         The task being tuned.
 
@@ -148,14 +160,15 @@ class TunableModel(metaclass=abc.ABCMeta):
     raise NotImplementedError()
 
   @abc.abstractmethod
-  def section_constraints(self, task_index=None) -> collections.OrderedDict:
+  def section_constraints(self, task_index_and_task :
+                          typing.Tuple[int, tvm.autotvm.task.Task]=None) -> collections.OrderedDict:
     """Return the section_constraints= argument to tvm.micro.device.abc.generate_config.
 
     Params
     ------
-    task_index : Optional[int]
-        If given, the index of the task to be tuned. Needed for now due to split memory
-        allocation between TVM RPC Server and device.
+    task_index : Optional[(int, Task)]
+        If given, a tuple containing the index of the task to be tuned and the Task instance itself.
+        Needed for now due to split memory allocation between TVM RPC Server and device.
 
     Returns
     -------
@@ -285,7 +298,7 @@ def instantiate_from_spec(spec : str) -> typing.Tuple[CompiledModel, str]:
   except ImportError as err:
     raise ModelInstantiationError(f'Could not import {__name__}.{model_name}') from err
 
-  model_config = {}
+  model_config = config_util.Config(util.get_repo_root(), {})
   if config_path:
     try:
       model_config = config_util.Config.load(config_path)

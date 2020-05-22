@@ -16,50 +16,23 @@
 # under the License.
 """Auto-tuning on ARM Cortex-M7 STM32F746 Boards."""
 import argparse
-import datetime
-import json
+import contextlib
 import logging
 import os
-import os.path
-import signal
-import subprocess
-import sys
-from collections import OrderedDict
+import time
 
-from mxnet.gluon.model_zoo import vision
 import numpy as np
-from PIL import Image
 
-import topi
 import tvm
-from tvm import rpc, autotvm, relay
-from tvm.contrib import graph_runtime, util, download
 
-from tvm.autotvm.tuner import XGBTuner, GATuner, RandomTuner, GridSearchTuner
-
-import tvm.micro as micro
-from tvm.micro import create_micro_mod
+import tvm.micro
 import tvm.micro.device.arm.stm32f746xx as stm32f746xx
-from tvm.micro.device.arm.stm32f746xx import MemConstraint
 
-from tvm.relay import transform
-from tvm.relay.op import nn
-
-from topi.util import get_const_tuple
-from topi.nn.util import get_const_int, get_pad_tuple
-from topi.nn.conv2d import conv2d, conv2d_nchw
-from topi.generic import schedule_conv2d_nchw
-from topi.nn.pad import pad
-from topi.nn.util import get_pad_tuple
-from topi.util import simplify, get_const_tuple, traverse_inline
-
+from micro_eval import model
+from micro_eval.util import autotvm_log_util
 from micro_eval.util import device_util
+from micro_eval.util import log_util
 from micro_eval.util import model_util
-from micro_eval.model.cifar10_cnn import gen_cifar10_cnn
-from micro_eval.micro_topi import collect_conv_tasks
-from micro_eval.micro_topi.cortex_m7.conv2d.direct import conv2d_direct
-from micro_eval.micro_topi.cortex_m7.conv2d.direct_simd import conv2d_direct_simd
-from micro_eval.micro_topi.cortex_m7.conv2d.partial_im2col import conv2d_partial_im2col
 
 ################
 # Instructions #
@@ -107,120 +80,130 @@ from micro_eval.micro_topi.cortex_m7.conv2d.partial_im2col import conv2d_partial
 _LOG = logging.getLogger(__name__)
 
 
-# disable timeouts because JTAG is slow
-TIMEOUT_SEC = 0
-
-
 def get_num_devices(tracker_host, tracker_port, key):
-    conn = rpc.connect_tracker(tracker_host, tracker_port)
+    conn = tvm.rpc.connect_tracker(tracker_host, tracker_port)
     summary = conn.text_summary()
     num_connected = 0
     for line in summary.split('\n'):
         if 'Queue Status' in line:
             break
-        if dev_id in line:
+        if key in line:
             num_connected += 1
     return num_connected
 
 
 def _tune_one_task(args, measure_option, task_index, num_tasks, autotvm_log_file, task):
-    _LOG.info(f'starting task {i}: ({task.name}, {task.args})')
+    _LOG.info(f'starting task {task_index}: ({task.name}, {task.args})')
     prefix = "[Task %2d/%2d] " % (task_index, num_tasks)
-    #tuner = XGBTuner(task, loss_type='rank')
-    tuner = GATuner(task)
+    #tuner = tvm.autotvm.tuner.XGBTuner(task, loss_type='rank')
+    tuner = tvm.autotvm.tuner.GATuner(task)
 
     n_trial = min(args.num_iterations, len(task.config_space))
     tuner.tune(n_trial=args.num_iterations,
                early_stopping=args.num_iterations,
                measure_option=measure_option,
                callbacks=[
-                   autotvm.callback.progress_bar(args.num_iterations, prefix=prefix, si_prefix='k'),
-                   autotvm.callback.log_to_file(autotvm_log_file)],
+                   tvm.autotvm.callback.progress_bar(args.num_iterations, prefix=prefix, si_prefix='k'),
+                   tvm.autotvm.callback.log_to_file(autotvm_log_file)],
                si_prefix='k')
 
 
 def tune_model(args, transport_launcher, model_inst):
-    tasks = model_inst.get_tasks()
+    compiled_model = model_inst.build_model()
+    tasks = model_inst.extract_tunable_tasks(compiled_model)
     _LOG.info(f'extracted {len(tasks)} tasks: {tasks}')
     for i, t in enumerate(tasks):
         _LOG.info(f' * Task {i:d}: config space is {len(t.config_space)}')
 
-    return tasks
     if args.single_task_index:
         assert len(tasks) >= args.single_task_index, (
             f'--single-task-index={args.single_task_index}, but extracted only {len(tasks)} tasks')
 
         tasks = [tasks[args.single_task_index]]
 
-    if args.pre_launched_tracker_hostport:
-        tracker_host, tracker_port = args.pre_launched_tracker_hostport.rsplit(':', 1)
-        tracker_port = int(tracker_port)
-    else:
-        tracker_host, tracker_port = transport_launcher.tracker_host_port_tuple
-
-    num_servers = get_num_devices(tracker_host, tracker_port, transport_launcher.tracker_key)
-    _LOG.info('Discovered {num_servers} available servers')
-    assert num_servers > 0, (
-        f'No servers available on the tracker for key {transport_launcher.tracker_key}')
-
     _LOG.info('[Tuning]')
     logging.getLogger('autotvm').setLevel(logging.INFO)
-    logging.getLogger('autotvm').addHandler(logging.StreamHandler(sys.stdout))
 
     # create tmp log file
-    tuning_log = autotvm_log_util.gen_tuning_log_path(f'arm.stm32f746xx.{model_inst.get_config_str()}')
-    tmp_log_flie = f'{tuning_log}.tmp'
+    job_name = autotvm_log_util.compute_job_name(args.model_spec, model_inst)
+    tuning_log = autotvm_log_util.gen_tuning_log_path(job_name)
+    tmp_log_file = f'{tuning_log}.tmp'
     assert not os.path.exists(tmp_log_file)
 
+    tmp_log_file_dir = os.path.dirname(tmp_log_file)
+    if not os.path.isdir(tmp_log_file_dir):
+        os.makedirs(tmp_log_file_dir)
+
     for i, task in enumerate(tasks):
-        measure_option = model_inst.get_autotvm_measure_option(
-            num_servers, tracker_host, tracker_port, transport_launcher.tracker_key, task)
-        if args.pre_launched_tracker_hostport:
-            _tune_one_task(args, measure_option, task_index, len(tasks), tmp_log_file, task)
-        else:
-            with transport_launcher.launch(
-                    generate_config_func=micro.device.arm.stm32f746xx.gen_config,
-                    generate_config_kw={
-                        'section_constraints': model_inst.get_section_constraints(task)}):
-                _tune_one_task(args, measure_option, task_index, len(tasks), tmp_log_file, task)
+        with contextlib.ExitStack() as exit_stack:
+            if args.pre_launched_tracker_hostport:
+                tracker_host, tracker_port = args.pre_launched_tracker_hostport.rsplit(':', 1)
+                tracker_port = int(tracker_port)
+                _LOG.warning('with pre-launched tracker, the micro.Session device config may become '
+                             'out of sync with the device config used here to build models')
+                target_num_servers = 1
+            else:
+                tracker_host, tracker_port = transport_launcher.tracker_host_port_tuple
+                section_constraints = model_inst.section_constraints(task_index_and_task=(i, task))
+                exit_stack.enter_context(transport_launcher.launch(
+                    stm32f746xx.generate_config,
+                    {'section_constraints': section_constraints}))
+                target_num_servers = transport_launcher.num_instances
 
-    return tmp_log_file
+            num_servers = 0
+            while num_servers < target_num_servers:
+                num_servers = get_num_devices(tracker_host, tracker_port, transport_launcher.rpc_tracker_key)
+                if num_servers < target_num_servers:
+                    _LOG.info(
+                        f'Found {num_servers} RPC servers under key {transport_launcher.rpc_tracker_key}, '
+                        f'waiting for {target_num_servers} total to become available')
+            _LOG.info(
+                f'Discovered {num_servers} available RPC servers for key '
+                f'{transport_launcher.rpc_tracker_key}')
+            assert num_servers > 0, (
+                f'No servers available on the tracker for key {transport_launcher.rpc_tracker_key}')
+
+            dev_config = stm32f746xx.generate_config(
+                tracker_host, tracker_port, section_constraints=section_constraints)
+
+            measure_option = model_inst.get_autotvm_measure_option(
+                num_servers, tracker_host, tracker_port, transport_launcher.rpc_tracker_key,
+                dev_config, i, task)
+
+            _tune_one_task(args, measure_option, i, len(tasks), tmp_log_file, task)
+
+    return tasks, tmp_log_file
 
 
-def analyze(tasks, tmp_log_file, promote=False):
-    print("\nBest configs:")
+def analyze(args, model_inst, tasks, tmp_log_file, promote=False):
+    _LOG.info('Best configs:')
     for i, task in enumerate(reversed(tasks)):
        # show best config from tuning
-       dispatch_context = autotvm.apply_history_best(tmp_log_file)
+       dispatch_context = tvm.autotvm.apply_history_best(tmp_log_file)
        best_config = dispatch_context.query(task.target, task.workload)
-       print(f'  task.target: {task.target}')
-       print(f'  task {i}: {best_config}')
+       _LOG.info(f'  task.target: {task.target}')
+       _LOG.info(f'  task {i}: {best_config}')
 
     # store best record in a cache file
     best_log_file = os.path.splitext(tmp_log_file)[0]
-    autotvm.record.pick_best(tmp_log_file, best_log_file)
+    tvm.autotvm.record.pick_best(tmp_log_file, best_log_file)
+    _LOG.info(f'Wrote best configs to {best_log_file}')
     if promote:
-        symlink_path, timestamp = os.path.splitext(best_log_file)
-        if os.path.lexists(symlink_path):
-            if not os.path.islink(symlink_path):
-                os.rename(symlink_path, f'{symlink_path}.moved-aside-for-{timestamp}')
-            else:
-                os.unlink(symlink_path)
-
-        os.symlink(os.path.basename(tmp_log_file), symlink_path)
+        job_name = autotvm_log_util.compute_job_name(args.model_spec, model_inst)
+        autotvm_log_util.promote(job_name, best_log_file)
+        _LOG.info(f'Promoted {best_log_file} to the default tuning log for model spec {args.model_spec}')
 
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('model_specs',nargs='+',
-                        help=('Specifies the models to evaluate in terms of model name, config, '
-                              'and setting. Entries are of the form '
+    parser.add_argument('model_spec',
+                        help=('Specifies the model to tune in terms of model name, setting, '
+                              'and config. Entries are of the form '
                               '<model_name>:[setting=]<setting>[:[config=]<config>]. <model_name> '
                               'is a string naming the Python module relative to micro_eval.models '
                               'that defines the TunableModule subclass to use. <setting> describes '
-                              'the target and runtime used, and must be utvm if specified here. '
-                              '<config> is the path to a JSON file containing tweaks to the '
-                              'built module.'))
+                              'the target and runtime used, and must be "micro_dev." <config> is '
+                              'the path to a JSON file containing tweaks to the built module.'))
     parser.add_argument('--environment-config',
                         default=device_util.DeviceTransportLauncher.DEFAULT_ENVIRONMENT_CONFIG_PATH,
                         help='path to configuration file tree root')
@@ -231,7 +214,7 @@ def parse_args():
                         help=('If specified, tell OpenOCD to use connected devices with these specific '
                               'serial numbers (comma-separated). Must match the "hla_serial" key in '
                               'the environment config.'))
-    parser.add_argument('--skip-writing-transport-config', type=bool, action='store_true',
+    parser.add_argument('--skip-writing-transport-config', action='store_true',
                         help=("If specified, don't write transport (OpenOCD and TVM RPC Server) config."))
     subparsers = parser.add_subparsers(dest='action')
 
@@ -247,53 +230,81 @@ def parse_args():
                                    'used with rpc_dev_config and launch_transport subcommands to '
                                    'tweak RPC server or OpenOCD configuration.'))
 
-    launch_transport = subparsers.add_parser('launch_transport')
+    launch_transport_parser = subparsers.add_parser('launch_transport')
+    launch_transport_parser.add_argument(
+        '--task-index', type=int, required=True,
+        help=('If specified, the 0-based task index used to configure the TVM RPC server. If not '
+              'specified, the TVM RPC server is configured for whole-model execution (which is not '
+              'useful for autotuning, but would be useful for evaluation). At present, this mainly '
+              "adjusts the TVM RPC server's section allocation map. This option may go away in the "
+              'future should it become unnecessary to adjust this.'))
+
 
     analyze_parser = subparsers.add_parser('analyze')
     analyze_parser.add_argument('--log-file', required=True, help='path to log file to analyze')
     analyze_parser.add_argument('--promote', action='store_true', help='promote to symlinked default')
 
     rpc_server_dev_config_parser = subparsers.add_parser('rpc_dev_config')
+    rpc_server_dev_config_parser.add_argument(
+        '--task-index', type=int,
+        help=('If specified, the 0-based task index used to configure the TVM RPC server. If not '
+              'specified, the TVM RPC server is configured for whole-model execution (which is not '
+              'useful for autotuning, but would be useful for evaluation). At present, this mainly '
+              "adjusts the TVM RPC server's section allocation map. This option may go away in the "
+              'future should it become unnecessary to adjust this.'))
     return parser.parse_args()
 
 
 def _cmd_rpc_dev_config(args):
     transport_launcher = device_util.DeviceTransportLauncher({'use_tracker': True})
-    model_inst = model.instantiate_from_args(args)
+    model_inst, _ = model.instantiate_from_spec(args.model_spec)
+    index_and_task = None
+    if args.task_index is not None:
+        tasks = model_inst.extract_tunable_tasks(model_inst.build_model())
+        index_and_task = (args.task_index, tasks[args.task_index])
+
     transport_launcher.generate_rpc_server_configs(
-        micro.device.arm.stm32f746xx.generate_config, model_inst.section_constraints())
+        tvm.micro.device.arm.stm32f746xx.generate_config,
+        {'section_constraints': model_inst.section_constraints(index_and_task)})
     transport_launcher.generate_openocd_configs()
     print(f'Wrote OpenOCD and RPC server configs underneath {transport_launcher.work_dirtree_root}')
 
 def _cmd_launch_transport(args):
+    log_util.config(['autotune', args.model_spec])
     transport_launcher = device_util.DeviceTransportLauncher({'use_tracker': True})
     generate_config = not args.skip_writing_transport_config
 
     launch_kw = {'generate_config': generate_config}
     if generate_config:
-        model_inst = model.instantiate_from_args(args)
-        launch_kw['generate_config_func'] = micro.device.arm.stm32f746xx.generate_config
-        launch_kw['generate_config_kw'] = model_inst.section_constraints()
+        model_inst, _ = model.instantiate_from_spec(args.model_spec)
+        index_and_task = None
+        if args.task_index is not None:
+            tasks = model_inst.extract_tunable_tasks(model_inst.build_model())
+            index_and_task = (args.task_index, tasks[args.task_index])
+        launch_kw['generate_config_func'] = tvm.micro.device.arm.stm32f746xx.generate_config
+        launch_kw['generate_config_kw'] = {
+            'section_constraints': model_inst.section_constraints(index_and_task)}
 
-    with transport_launcher.launch(**kw):
+    with transport_launcher.launch(**launch_kw):
         print('Transport launched. Press Ctrl+C to terminate.')
         try:
-            time.sleep()
+            while True:
+                time.sleep(10)
         except KeyboardInterrupt:
             print('Caught SIGINT; shutting down')
 
 def _cmd_tune(args):
     transport_launcher = device_util.DeviceTransportLauncher({'use_tracker': True})
-    model_inst = model.instantiate_from_args(args)
-    log_util.config(['autotune', model_inst.get_config_str()])
-    target = tvm.target.create('c -device=micro_dev')
+    log_util.config(['autotune', args.model_spec], logging.INFO)
+    model_inst, _ = model.instantiate_from_spec(args.model_spec)
     tasks, log_file = tune_model(args, transport_launcher, model_inst)
-    analyze(tasks, log_file, promote=True)
+    analyze(args, model_inst, tasks, log_file, promote=True)
 
 
 def _cmd_analyze(args):
-    tasks = get_tasks(args)
-    analyze(tasks, args.log_file, promote=args.promote)
+    model_inst, _ = model.instantiate_from_spec(args.model_spec)
+    tasks = model_inst.extract_tunable_tasks(model_inst.build_model())
+    analyze(args, model_inst, tasks, args.log_file, promote=args.promote)
 
 
 def main():

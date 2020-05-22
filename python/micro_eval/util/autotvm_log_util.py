@@ -16,11 +16,16 @@
 # under the License.
 """Defines functions for accessing autotvm logs."""
 
+import datetime
+import os
+import shutil
+
 from micro_eval import util
 
 
-def gen_cifar10_job_name(kernel_layouts):
-  return f'arm.stm32f746xx.cifar10.{"-".join(kernel_layouts)}'
+def compute_job_name(model_spec, model_inst):
+    return (f'{model_spec.rsplit(":", 1)[0]}-{model_inst.get_config_str()}'
+            .replace(':', '-').replace('/', '-'))
 
 
 def get_tuning_log_root():
@@ -54,7 +59,7 @@ def get_default_log_path(job_name):
       The default path to this log. This is expected to be a symlink to the real
       log produced in tuning.
   """
-  return f'{get_tuning_log_root()}/promoted/{job_name}.log'
+  return f'{get_eval_tuning_log_root()}/{job_name}.log'
 
 
 def gen_tuning_log_path(job_name):
@@ -110,9 +115,13 @@ def promote(job_name, tuning_log_path):
 
     os.unlink(symlink_path)
 
-  eval_log_path = os.path.join(get_eval_tuning_log_path(), os.path.basename(tuning_log_path))
+  eval_log_root = get_eval_tuning_log_root()
+  eval_log_path = os.path.join(eval_log_root, os.path.basename(tuning_log_path))
   if os.path.exists(eval_log_path):
     raise EvalLogExistsError(eval_log_path)
 
+  if not os.path.exists(eval_log_root):
+    os.makedirs(eval_log_root)
+
   shutil.copy2(tuning_log_path, eval_log_path)
-  os.symlink(os.path.relpath(tuning_log_path, os.path.dirname(symlink_path)), symlink_path)
+  os.symlink(os.path.relpath(eval_log_path, os.path.dirname(symlink_path)), symlink_path)

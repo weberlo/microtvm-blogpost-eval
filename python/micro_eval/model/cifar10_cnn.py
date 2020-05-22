@@ -55,7 +55,7 @@ def _gen_random_params(mod, param_shapes):
             name = param.name_hint
             low, high = _RANDOM_BOUNDS[name]
             rand_tensor = param_shapes[name].gen_rand_tensor(low, high)
-            params[param.name_hint] = tvm.nd.array(rand_tensor)
+            params[param.name_hint] = rand_tensor.data
 
         GENERATED_RANDOM_PARAMS[_cache_key] = params
 
@@ -213,8 +213,8 @@ class Cifar10Cnn(TunableModel):
             data_layout=self.DATA_LAYOUT,
             kernel_layouts=kernel_layouts,
             param_args=param_args))
-        if self.config.get('use_random_params', False):
-            params = _gen_random_params(mod, data_layout, kernel_layouts)
+        if self.config.get('use_random_params', True):
+            params = _gen_random_params(mod, param_shapes)
         else:
             params = _load_cmsis_params(mod, self.config.relpath('parameter_file'), param_shapes)
 
@@ -224,40 +224,42 @@ class Cifar10Cnn(TunableModel):
 
     def extract_tunable_tasks(self, compiled_model):
         with tvm.target.build_config(opt_level=3, disable_vectorize=True):
-            tasks = autotvm.task.extract_from_program(
-                compiled_model.model[compiled_model.entry_point],
+            tasks = tvm.autotvm.task.extract_from_program(
+                compiled_model.ir_mod[compiled_model.entry_point],
                 compiled_model.params,
-                self.target,
-                ops=[tvm.relay.op.nn.conv2d])
+                self.target)
 
+        print('tasks', tasks)
         assert len(tasks) == 3
         return tasks
 
     def get_autotvm_measure_option(self, num_runners : int, tracker_host : str, tracker_port : int,
-                                 tracker_key : str, task : tvm.autotvm.task.Task):
-        builder = autotvm.LocalBuilder(
+                                   tracker_key : str, dev_config : dict, task_index : int,
+                                   task : tvm.autotvm.task.Task):
+        builder = tvm.autotvm.LocalBuilder(
             build_func=tvm.micro.cross_compiler(
-                OBJ_BUILD_CONFIG,
+                dev_config,
                 tvm.micro.LibType.OPERATOR,
                 lib_headers=HEADERS,
                 lib_include_paths=INCLUDE_PATHS),
-            n_parallel=num_servers)
+            n_parallel=num_runners)
         builder.build_kwargs.setdefault('build_option', {})['disable_vectorize'] = True
-        runner = autotvm.RPCRunner(tracker_key, tracker_host, tracker_port, n_parallel=num_servers,
-                                   number=1, repeat=1, timeout=0)
+        runner = tvm.autotvm.RPCRunner(
+            tracker_key, tracker_host, tracker_port, n_parallel=num_runners,
+            number=1, repeat=1, timeout=0)
 
-        return autotvm.measure_option(builder=builder, runner=runner)
+        return tvm.autotvm.measure_option(builder=builder, runner=runner)
 
     def get_config_str(self):
-        return '-'.join(self._kernel_layouts())
+        return '-'.join(self._kernel_layouts)
 
     WORKSPACE_SIZE_BYTES_BY_TASK_INDEX = [132000, 132000, 10000]
 
     def dataset_generator_name(self):
         return 'cifar10'
 
-    def section_constraints(self, task_index=None):
-        if task_index is None:
+    def section_constraints(self, task_index_and_task=None):
+        if task_index_and_task is None:
             return collections.OrderedDict([
                 ('text', (23000, MemConstraint.ABSOLUTE_BYTES)),
                 ('rodata', (300, MemConstraint.ABSOLUTE_BYTES)),
@@ -269,6 +271,7 @@ class Cifar10Cnn(TunableModel):
                 ('stack', (128, MemConstraint.ABSOLUTE_BYTES)),
             ])
 
+        task_index, task = task_index_and_task
         if task.name == 'conv2d_direct.arm_cpu':
             return collections.OrderedDict([
                 ('text', (28000, MemConstraint.ABSOLUTE_BYTES)),
