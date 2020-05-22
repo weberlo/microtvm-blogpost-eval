@@ -42,7 +42,9 @@ https://www.st.com/en/evaluation-tools/nucleo-f746zg.html).
 
 5. Install prerequisites:
 
-       $ apt-get install gcc-arm-none-eabi
+    ```bash
+    $ apt-get install gcc-arm-none-eabi
+    ```
 
 6. Configure hardware and external binaries.
 
@@ -51,21 +53,30 @@ https://www.st.com/en/evaluation-tools/nucleo-f746zg.html).
 
 7. Setup virtualenv. Use `requirements.txt` and `constraints.txt`.
 
-        $ python3 -mvenv _venv
-        $ . _venv/bin/activate
-        $ pip install -r requirements.txt -c constraints.txt
-        $ export PYTHONPATH=$(pwd)/python:$PYTHONPATH
+    ```bash
+    $ python3 -mvenv _venv
+    $ . _venv/bin/activate
+    $ pip install -r requirements.txt -c constraints.txt
+    $ export PYTHONPATH=$(pwd)/python:$PYTHONPATH
+    ```
 
 8. Install [mBED CLI](https://os.mbed.com/docs/mbed-os/v5.15/tools/installation-and-setup.html).
 
-9. Clone the [minimal startup runtime](https://github.com/areusch/utvm-mbed-runtime).
-
 ## Flash the minimal startup runtime
 
-You need to do this once per dev board. In the location you've cloned the minimal startup runtime,
-run:
+You need to do this once per dev board.
 
-       $ mbed compile -m NUCLEO_F746ZG -t GCC_ARM --flash
+```bash
+$ mbed import https://github.com/areusch/utvm-mbed-runtime utvm-mbed-runtime
+$ cd utvm-mbed-runtime
+$ mbed compile -m NUCLEO_F746ZG -t GCC_ARM --flash
+
+Image: ./BUILD/NUCLEO_F746ZG/GCC_ARM/utvm-mbed-runtime.bin
+--- Terminal on /dev/ttyACM0 - 9600,8,N,1 ---
+```
+
+Once you see `--- Terminal ...` on the console, you can press `Ctrl+C`. You know that flashing
+has completed. If multiple boards are connected, you may not see the Terminal.
 
 Ensure that this command successfully flashes the device.
 
@@ -74,45 +85,55 @@ Ensure that this command successfully flashes the device.
 You can use `python -m micro_eval.bin.eval` to evaluate models on the host or device. The simplest
 invocation is as follows:
 
-    $ python -m micro_eval.bin.eval cifar10_cnn:interp
+```bash
+$ python -m micro_eval.bin.eval cifar10_cnn:interp
+```
 
 Try it now. You should see the results of running 10 iterations of model evaluation through the TVM
 host interpreter:
 
-    INFO eval.py:108 got result: {'label': array([-33,   1, -38, -36, -43, -66, -38, -58, -44,  -6], dtype=int8)}
-    INFO eval.py:108 got result: {'label': array([ -70,  -46,   -4,  -89,  -37,  -63, -110, -108,   17,   -6], dtype=int8)}
-    INFO eval.py:108 got result: {'label': array([  9,   7,   4, -41, -46, -51, -49, -19, -45, -26], dtype=int8)}
-    INFO eval.py:108 got result: {'label': array([  1,  -6,   8, -21, -25,  -5, -20,  -3,  -4,   1], dtype=int8)}
-    INFO eval.py:108 got result: {'label': array([ -2,   5,   5,  -5, -21, -11, -10,  -5,  -9, -10], dtype=int8)}
-    INFO eval.py:108 got result: {'label': array([  1,  -4,   3, -14, -14,   1, -19,  -9,   0, -13], dtype=int8)}
-    INFO eval.py:108 got result: {'label': array([ 14, -23,  30, -28, -33,  -1, -46, -36, -33, -45], dtype=int8)}
-    INFO eval.py:108 got result: {'label': array([-10, -19,  -4,   5,  -5,  -5, -19, -29, -18, -21], dtype=int8)}
-    INFO eval.py:108 got result: {'label': array([-49, -28,  28,  -2, -18, -58, -48, -73, -32,   5], dtype=int8)}
-    INFO eval.py:108 got result: {'label': array([ 15,  10,   0, -17, -42, -25, -23, -39, -44,   0], dtype=int8)}
+```
+INFO eval.py:108 got result: {'label': array([-33,   1, -38, -36, -43, -66, -38, -58, -44,  -6], dtype=int8)}
+INFO eval.py:108 got result: {'label': array([ -70,  -46,   -4,  -89,  -37,  -63, -110, -108,   17,   -6], dtype=int8)}
+INFO eval.py:108 got result: {'label': array([  9,   7,   4, -41, -46, -51, -49, -19, -45, -26], dtype=int8)}
+INFO eval.py:108 got result: {'label': array([  1,  -6,   8, -21, -25,  -5, -20,  -3,  -4,   1], dtype=int8)}
+INFO eval.py:108 got result: {'label': array([ -2,   5,   5,  -5, -21, -11, -10,  -5,  -9, -10], dtype=int8)}
+INFO eval.py:108 got result: {'label': array([  1,  -4,   3, -14, -14,   1, -19,  -9,   0, -13], dtype=int8)}
+INFO eval.py:108 got result: {'label': array([ 14, -23,  30, -28, -33,  -1, -46, -36, -33, -45], dtype=int8)}
+INFO eval.py:108 got result: {'label': array([-10, -19,  -4,   5,  -5,  -5, -19, -29, -18, -21], dtype=int8)}
+INFO eval.py:108 got result: {'label': array([-49, -28,  28,  -2, -18, -58, -48, -73, -32,   5], dtype=int8)}
+INFO eval.py:108 got result: {'label': array([ 15,  10,   0, -17, -42, -25, -23, -39, -44,   0], dtype=int8)}
+```
 
 You can use the TVM interpreter as a source of correctness for checking other invocations of the
 same model. Try checking against the x86 runtime:
 
-    $ python -m micro_eval.bin.eval cifar10_cnn:cpu --validate-against=cifar10_cnn:interp
-    INFO eval.py:370 model_name  setting config     1    2    3    4    5    6    7    8    9
-    ERROR eval.py:376 cifar10_cnn cpu             +005 -016 -027 -011 +059 -033 -032 -033 -015
-    ERROR eval.py:376 cifar10_cnn interp          -030 +023 -027 -010 -003 +010 +013 -023 +023
-    ...
+```bash
+$ python -m micro_eval.bin.eval cifar10_cnn:cpu --validate-against=cifar10_cnn:interp
+INFO eval.py:370 model_name  setting config     1    2    3    4    5    6    7    8    9
+ERROR eval.py:376 cifar10_cnn cpu             +005 -016 -027 -011 +059 -033 -032 -033 -015
+ERROR eval.py:376 cifar10_cnn interp          -030 +023 -027 -010 -003 +010 +013 -023 +023
+...
+```
 
 This didn't work, because the cifar10_cnn model uses random parameters by default. Model configuration
 can be passed as JSON. Now try using the configuration for validating output, which loads specific
 parameters:
 
-    $ python -m micro_eval.bin.eval cifar10_cnn:cpu:data/ --validate-against=cifar10_cnn:interp
-    INFO eval.py:370 model_name  setting config                                1    2    3    4    5    6    7    8    9
-    INFO eval.py:376 cifar10_cnn interp  data/cifar10-config-validate.json  -021 +017 +022 +018 +004 +007 -013 -008 -013
-    INFO eval.py:376 cifar10_cnn cpu     data/cifar10-config-validate.json  -021 +017 +022 +018 +004 +007 -013 -008 -013
+```bash
+$ python -m micro_eval.bin.eval cifar10_cnn:cpu:data/ --validate-against=cifar10_cnn:interp
+INFO eval.py:370 model_name  setting config                                1    2    3    4    5    6    7    8    9
+INFO eval.py:376 cifar10_cnn interp  data/cifar10-config-validate.json  -021 +017 +022 +018 +004 +007 -013 -008 -013
+INFO eval.py:376 cifar10_cnn cpu     data/cifar10-config-validate.json  -021 +017 +022 +018 +004 +007 -013 -008 -013
+```
 
 Now try running on the attached STM-Nucleo board:
 
-    $ python -m micro_eval.bin.eval cifar10_cnn:micro_dev
-    INFO eval.py:184 got prediction after 293.912 ms: {'label': array([  1, -16,  -2, -13,  -8,  17, -10, -15, -17, -14], dtype=int8)}
-    ...
+```bash
+$ python -m micro_eval.bin.eval cifar10_cnn:micro_dev
+INFO eval.py:184 got prediction after 293.912 ms: {'label': array([  1, -16,  -2, -13,  -8,  17, -10, -15, -17, -14], dtype=int8)}
+...
+```
 
 See if you can verify the output against the TVM interpreter runtime.
 
@@ -122,8 +143,10 @@ The previous result didn't run very quickly--__294__ ms vs __100__ ms in the equ
 TVM can improve the runtime by automatically reorganizing and optimizing the computation, a process
 known as _autotuning_. First, let's see the result:
 
-    $ python -m micro_eval.bin.eval cifar10_cnn:micro_dev --use-tuned-schedule
-    INFO eval.py:184 got prediction after 157.354 ms: {'label': array([ -32,  -58,  -50,  -48,  103,   36, -110,   54,   66,   94], dtype=int8)}
+```bash
+$ python -m micro_eval.bin.eval cifar10_cnn:micro_dev --use-tuned-schedule
+INFO eval.py:184 got prediction after 157.354 ms: {'label': array([ -32,  -58,  -50,  -48,  103,   36, -110,   54,   66,   94], dtype=int8)}
+```
 
 This gave us about a 47% improvement in runtime.
 
@@ -131,9 +154,11 @@ This gave us about a 47% improvement in runtime.
 
 You can run and time CMSIS-NN's version of this CIFAR10-CNN network:
 
-    $ python -m micro_eval.bin.eval cmsis_cifar10_cnn:micro_dev
-    INFO eval.py:189 got prediction after 105.403 ms: {'label': array([-27,  11, -14, -16, -35, -35, -35, -11,  27, 127], dtype=int8)}
-    ...
+```bash
+$ python -m micro_eval.bin.eval cmsis_cifar10_cnn:micro_dev
+INFO eval.py:189 got prediction after 105.403 ms: {'label': array([-27,  11, -14, -16, -35, -35, -35, -11,  27, 127], dtype=int8)}
+...
+```
 
 There are a couple of points to note about this runtime:
 1. It uses ARM's quantization scheme, which isn't TFLite-compatible.
@@ -144,9 +169,11 @@ You can also run and time a CMSIS-NN model using TFLite-compatible quantization.
 doesn't output accurate results, it runs the same operations and differs only in weights, so the
 runtime should roughly match what you would expect running CMSIS-CNN as a TFLite model:
 
-    $ python -m micro_eval.bin.eval cmsis_cifar10_cnn:micro_dev:data/cmsis-config-tflite.json
-    INFO eval.py:189 got prediction after 135.856 ms: {'label': array([ -44, -128, -128,  127, -128, -128, -128, -128,  113,  127], dtype=int8)}
-    ...
+```bash
+$ python -m micro_eval.bin.eval cmsis_cifar10_cnn:micro_dev:data/cmsis-config-tflite.json
+INFO eval.py:189 got prediction after 135.856 ms: {'label': array([ -44, -128, -128,  127, -128, -128, -128, -128,  113,  127], dtype=int8)}
+...
+```
 
 ## Running autotuning
 
@@ -175,11 +202,15 @@ some of the problems you can run into, and how to solve them.
 3. Try running openocd separately:
     1. First, generate the _transport config_:
 
-            $ python -m micro_eval.bin.autotune cifar10_cnn:micro_dev rpc_dev_config
+        ```bash
+        $ python -m micro_eval.bin.autotune cifar10_cnn:micro_dev rpc_dev_config
+        ```
 
     2. Now, try launching openocd:
 
-            $ 3rdparty/openocd/prefix/bin/openocd -f microrpc-dev-config/dev-0/openocd.cfg
+        ```bash
+        $ 3rdparty/openocd/prefix/bin/openocd -f microrpc-dev-config/dev-0/openocd.cfg
+        ```
 
     Troubleshoot this until it connects to the device succesfully.
 
@@ -187,8 +218,10 @@ some of the problems you can run into, and how to solve them.
 
 1. Double check a tracker/rpc server is not still running:
 
-        $ ps ax | grep tvm.exec.rpc_tracker
-        $ ps ax | grep tvm.exec.rpc_server
+    ```bash
+    $ ps ax | grep tvm.exec.rpc_tracker
+    $ ps ax | grep tvm.exec.rpc_server
+    ```
 
     Kill them if so.
 
@@ -198,17 +231,19 @@ Sometimes openocd, the tracker, or the RPC server need to be launched separately
 `microrpc-dev-config/launch-openocds.sh` shows you how to do this, but you can also launch
 them yourself. Here is how to use that script with autotuing and eval:
 
-    # adjust task-index or omit for evaluating the whole model
-    $ python -m micro_eval.bin.autotune cifar10_cnn:micro_dev rpc_dev_config --task-index=2
+```bash
+# adjust task-index or omit for evaluating the whole model
+$ python -m micro_eval.bin.autotune cifar10_cnn:micro_dev rpc_dev_config --task-index=2
 
-    # In another terminal:
-    $ cd microrpc-dev-config
-    $ ./launch-openocds.sh
+# In another terminal:
+$ cd microrpc-dev-config
+$ ./launch-openocds.sh
 
-    # In original terminal
-    $ python -m micro_eval.bin.autotune  --pre-launched-tracker-hostport 127.0.0.1:9190 \
-        --single-task-index=2...
-    $ python -m micro_eval.bin.eval --openocd-server-hostport 127.0.0.1:6666 ...
+# In original terminal
+$ python -m micro_eval.bin.autotune  --pre-launched-tracker-hostport 127.0.0.1:9190 \
+    --single-task-index=2...
+$ python -m micro_eval.bin.eval --openocd-server-hostport 127.0.0.1:6666 ...
+```
 
 ## Stuck/misbehaving board
 
