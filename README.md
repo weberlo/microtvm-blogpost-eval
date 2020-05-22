@@ -27,7 +27,9 @@ https://www.st.com/en/evaluation-tools/nucleo-f746zg.html).
  * __NOTE__: Ensure you have `0884659eb8c5fe51cc4cac9f2f8b6400f47fdee6` plus
    [PR 5648](https://github.com/apache/incubator-tvm/pull/5648).
 
-3. Build OpenOCD. Here we have chosen a specific commit that works with the Nucleo board, but
+3. (maybe optional, required to repro performance) Install [GNU ARM Embedded Toolchain 9.2.1](https://developer.arm.com/tools-and-software/open-source-software/developer-tools/gnu-toolchain/gnu-rm/downloads).
+
+4. Build OpenOCD. Here we have chosen a specific commit that works with the Nucleo board, but
 
 ```bash
     $ tools/patch-openocd.sh  # If using clang, fix a compiler error.
@@ -38,21 +40,34 @@ https://www.st.com/en/evaluation-tools/nucleo-f746zg.html).
     $ make && make install
 ```
 
-4. Install prerequisites:
+5. Install prerequisites:
 
        $ apt-get install gcc-arm-none-eabi
 
-5. Configure hardware and external binaries.
+6. Configure hardware and external binaries.
 
     Copy `env-config.json.template` to `env-config.json` and modify the values called out in
-    that file.
+    that file. Be sure you remove the `# comments`, which aren't valid JSON.
 
-6. Setup virtualenv. Use `requirements.txt` and `constraints.txt`.
+7. Setup virtualenv. Use `requirements.txt` and `constraints.txt`.
 
         $ python3 -mvenv _venv
         $ . _venv/bin/activate
         $ pip install -r requirements.txt -c constraints.txt
         $ export PYTHONPATH=$(pwd)/python:$PYTHONPATH
+
+8. Install [mBED CLI](https://os.mbed.com/docs/mbed-os/v5.15/tools/installation-and-setup.html).
+
+9. Clone the [minimal startup runtime](https://github.com/areusch/utvm-mbed-runtime).
+
+## Flash the minimal startup runtime
+
+You need to do this once per dev board. In the location you've cloned the minimal startup runtime,
+run:
+
+       $ mbed compile -m NUCLEO_F746ZG -t GCC_ARM --flash
+
+Ensure that this command successfully flashes the device.
 
 ## Run untuned models
 
