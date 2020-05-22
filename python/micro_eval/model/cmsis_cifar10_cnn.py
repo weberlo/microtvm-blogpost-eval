@@ -44,10 +44,12 @@ CIFAR10_IMPLS = {
     'src': f'{util.get_repo_root()}/cmsis_src/cmsis_cifar10_cnn/cmsis_cifar10_cnn_tfl.c',
     'extra_srcs': [
       f'{util.CMSIS_NN_PATH}/CMSIS/NN/Source/ConvolutionFunctions/arm_convolve_s8.c',
+      f'{util.CMSIS_NN_PATH}/CMSIS/NN/Source/NNSupportFunctions/arm_q7_to_q15_with_offset.c',
       f'{util.CMSIS_NN_PATH}/CMSIS/NN/Source/ConvolutionFunctions/arm_nn_mat_mult_kernel_s8_s16.c',
       f'{util.CMSIS_NN_PATH}/CMSIS/NN/Source/FullyConnectedFunctions/arm_fully_connected_s8.c',
       f'{util.CMSIS_NN_PATH}/CMSIS/NN/Source/NNSupportFunctions/arm_nn_vec_mat_mult_t_s8.c',
       f'{util.CMSIS_NN_PATH}/CMSIS/NN/Source/PoolingFunctions/arm_max_pool_s8.c',
+      f'{util.CMSIS_NN_PATH}/CMSIS/NN/Source/ActivationFunctions/arm_relu_q7.c',
       f'{util.CMSIS_NN_PATH}/CMSIS/NN/Source/PoolingFunctions/arm_avgpool_s8.c',
     ],
   },
@@ -76,7 +78,7 @@ class CmsisCifar10Cnn(TunableModel):
         lib_include_paths=INCLUDE_PATHS + [CIFAR10_INCLUDE_PATH])
 
       _LOG.info('graph %s',compiled_model.ir_mod.graph_str)
-      return LoweredModule(compiled_model.ir_mod.graph_str, micro_mod, []) #micro_mod
+      return LoweredModule(compiled_model.ir_mod.graph_str, micro_mod, {}) #micro_mod
 
     def build_model(self):
       mod = mock_c_mod.build([CIFAR10_IMPLS[self.impl]['src']], 'cifar10',

@@ -1,98 +1,195 @@
-<!-- - TODO add RPC auto-restart script to this repo and explain this snippet in `tune_relay_microtvm.py`
-```python
-RPC_SERVER_DEV_CONFIG_BASE = f'/home/lweber/micro-rpc-tempdirs'
-for i in range(10):
-    DEV_CONFIG['server_port'] = 6666 + i
-    with open(f'{RPC_SERVER_DEV_CONFIG_BASE}/{i}/utvm_dev_config.json', 'w') as f:
-        json.dump(DEV_CONFIG, f, indent=4)
-``` -->
+![microTVM logo](logo.png "MicroTVM CIFAR10-CNN Demo")
 
-# Setup
-- Currently, must use Linux for host OS.
-- Must have TVM compiled and on your `PYTHONPATH`.
-- Add `micro_eval` to your `PYTHONPATH` environment variable.
+microTVM is an effort to run TVM on bare-metal microcontrollers. You can read more about the current
+design in the original [microTVM RFC](https://github.com/apache/incubator-tvm/issues/2563). This repo
+shows you how to run CIFAR10-CNN on the host machine and on an [STM Nucleo-F746ZG development board](
+https://www.st.com/en/evaluation-tools/nucleo-f746zg.html).
 
-## Arm STM32
-- Download [CMSIS](https://github.com/ARM-software/CMSIS_5).
-  - Check out the hash `b5ef1c9be72f4263ca56e9cdd457e0bf4cb29775`, corresponding to version ???
-  - Export an environment variable `CMSIS_NN_PATH=/path/to/CMSIS_5`.
-- Download the [Arm embedded toolchain](https://developer.arm.com/tools-and-software/open-source-software/developer-tools/gnu-toolchain/gnu-rm/downloads) for your host machine.
-- Install OpenOCD.
-  - Easiest route is via your distro's package manager (e.g., `apt-get install openocd`).
-  - Connect the board to your machine via USB-JTAG.
-  - Create an OpenOCD config file `board.cfg` with the following contents:
-  ```
-  source [find interface/stlink-v2-1.cfg]
-  source [find target/stm32f7x.cfg]
-  ```
-- Run `openocd -f /path/to/board.cfg`.
-- You should first try to run the µTVM tests.
-  - Navigate to your local TVM repo and find the file `tests/python/unittest/test_runtime_micro.py`.
-  - Near the top, you will see an assignment `DEV_CONFIG = micro.device.host.generate_config()`.
-  - Change the right-hand side to `micro.device.arm.stm32f746xx.generate_config('127.0.0.1', 6666)`.
-    - The arguments here are the OpenOCD server address and the server port (which defaults to 6666).
-  - Try running the tests with `python tests/python/unittest/test_runtime_micro.py`
-  - It should fail at `test_multiple_sessions`, if you only have one device connected, because each session requires a separate physical device.
+## Hardware you will need
 
-### (Optional) Multiple Boards
-If you're tuning, it helps to have more than one board to test kernels on.
-In order to have multiple boads connected and being driven by µTVM, you need to find each of their serial numbers, so they can be uniquely identified.
-With only one board plugged in at a time, run the following bash command to find the current board's serial number:
-```bash
-  openocd -d3 \
-    -f /usr/share/openocd/scripts/interface/stlink-v2-1.cfg \
-    -f /usr/share/openocd/scripts/target/stm32f7x.cfg \
-    -c 'hla_serial wrong_serial' \
-    2>&1 \
-    | grep 'Device serial number'
-```
-and you should see a line like the following:
-```
-Debug: 264 19 libusb1_common.c:65 string_descriptor_equal(): Device serial number '066EFF545057717867150931' doesn't match requested serial 'wrong_serial
-```
-In the case above, `066EFF545057717867150931` is the serial number.
-You then need to create an OpenOCD config file that makes use of this serial number.
-The reason why we need separate configs is so you can bind each openocd instance to different gdb, tcl, and telnet ports.
-Make a config for each board.
-Here's an example of configs for two different boards:
-board0.cfg:
-```
-source [find interface/stlink-v2-1.cfg]
-source [find target/stm32f7x.cfg]
-hla_serial 066EFF545057717867150931
+* Linux machine (OS X is also unofficially supported, and will be officially supported in the future)
+* [STM Nucleo-F746ZG development board](https://www.st.com/en/evaluation-tools/nucleo-f746zg.html)
+** Autotuning can be sped up by adding more of these development boards.
+* micro USB cable
 
-gdb_port 3333
-tcl_port 6666
-telnet_port 4444
-```
-board1.cfg:
-```
-source [find interface/stlink-v2-1.cfg]
-source [find target/stm32f7x.cfg]
-hla_serial 066BFF485157717867193328
+## Getting Started
 
-gdb_port 3334
-tcl_port 6667
-telnet_port 4445
-```
-- You will need to launch an OpenOCD instance for each board.
-  - For board 0, run `openocd -f /path/to/board0.cfg`, for board 1, run `openocd -f /path/to/board1.cfg` in a *separate* terminal, etc.
+1. Clone this repository (use `git clone --recursive` to clone submodules).
+2. [Install TVM](https://docs.tvm.ai/install/from_source.html).
+ * __NOTE__: Ensure you enable microTVM by setting `set(USE_MICRO ON)` in `build/config.cmake`.
+ * __NOTE__: Ensure you have `0884659eb8c5fe51cc4cac9f2f8b6400f47fdee6` plus
+   [PR 5648](https://github.com/apache/incubator-tvm/pull/5648).
 
-## RISC-V Spike
-- During installation of each of the projects below, you may want to `git checkout` to a stable commit in them (e.g., the latest release in the repo's "releases" tab).  In my experience, the `master` branch doesn't have much vetting, in terms of bugs.
+3. Build OpenOCD. Here we have chosen a specific commit that works with the Nucleo board, but
 
-- Follow the instructions [here](https://github.com/riscv/riscv-gnu-toolchain) to set up and install the RISC-V GNU toolchain.
-  - This repo's `master` branch doesn't seem particularly stable, so we'd recommend commit hash `8520fc0baeb6b5345349fbab2e3bc560e4e7f351` (tag: rvv-0.8), as earlier versions have caused us problems.
-- Add the toolchain's install path to your shell's `PATH` environment variable.
-- We need a special version of OpenOCD that has RISC-V support.
-  - Follow the instructions [here](https://github.com/riscv/riscv-openocd) to set up and install a RISC-V-compatible version of OpenOCD.
-  - **NOTE**: you need to pass the `--enable-remote-bitbang` flag to `./configure`, as this is the communication protocol we will use.
-  - This repo's `master` branch doesn't seem particularly stable, so we'd recommend commit hash `1599853032c03d4cbd6eac1e6869ef750ec`, as earlier and later versions have caused us problems.
-- Make sure the resulting OpenOCD binary is on your `PATH`.
-- Export the `RISCV` environment variable as the directory where you would like Spike installed (e.g., `~/bin/risc-v/spike`).
-- Follow the instructions [here](https://github.com/riscv/riscv-isa-sim) to set up and install Spike.
-- Add `$RISCV/bin` to your `PATH`.
-- Now follow the instructions in the ["Debugging with GDB" section](https://github.com/riscv/riscv-isa-sim#debugging-with-gdb) to ensure you have everything set up correctly.
-  - If the text says `"Instruction sets want to be free!" at the end of the GDB session, then everything is working!
-- TODO add spike.cfg file to repo
-- TODO redo install
+    $ tools/patch-openocd.sh  # If using clang, fix a compiler error.
+    $ cd 3rdparty/openocd
+    # First, install dependencies listed in the README for your platform.
+    $ ./bootstrap
+    $ ./configure --prefix=$(pwd)/prefix
+    $ make && make install
+
+4. Install prerequisites:
+    $ apt-get install gcc-arm-none-eabi
+
+5. Configure hardware and external binaries.
+
+    Copy `env-config.json.template` to `env-config.json` and modify the values called out in
+    that file.
+
+6. Setup virtualenv. Use `requirements.txt` and `constraints.txt`.
+
+    $ python -mvenv _venv
+    $ _venv/bin/activate
+    $ pip install -r requirements.txt -c constraints.txt
+    $ export PYTHONPATH=$(pwd)/python:$PYTHONPATH
+
+## Run untuned models
+
+You can use `python -m micro_eval.bin.eval` to evaluate models on the host or device. The simplest
+invocation is as follows:
+
+    $ python -m micro_eval.bin.eval cifar10_cnn:interp
+
+Try it now. You should see the results of running 10 iterations of model evaluation through the TVM
+host interpreter:
+
+    INFO eval.py:108 got result: {'label': array([-33,   1, -38, -36, -43, -66, -38, -58, -44,  -6], dtype=int8)}
+    INFO eval.py:108 got result: {'label': array([ -70,  -46,   -4,  -89,  -37,  -63, -110, -108,   17,   -6], dtype=int8)}
+    INFO eval.py:108 got result: {'label': array([  9,   7,   4, -41, -46, -51, -49, -19, -45, -26], dtype=int8)}
+    INFO eval.py:108 got result: {'label': array([  1,  -6,   8, -21, -25,  -5, -20,  -3,  -4,   1], dtype=int8)}
+    INFO eval.py:108 got result: {'label': array([ -2,   5,   5,  -5, -21, -11, -10,  -5,  -9, -10], dtype=int8)}
+    INFO eval.py:108 got result: {'label': array([  1,  -4,   3, -14, -14,   1, -19,  -9,   0, -13], dtype=int8)}
+    INFO eval.py:108 got result: {'label': array([ 14, -23,  30, -28, -33,  -1, -46, -36, -33, -45], dtype=int8)}
+    INFO eval.py:108 got result: {'label': array([-10, -19,  -4,   5,  -5,  -5, -19, -29, -18, -21], dtype=int8)}
+    INFO eval.py:108 got result: {'label': array([-49, -28,  28,  -2, -18, -58, -48, -73, -32,   5], dtype=int8)}
+    INFO eval.py:108 got result: {'label': array([ 15,  10,   0, -17, -42, -25, -23, -39, -44,   0], dtype=int8)}
+
+You can use the TVM interpreter as a source of correctness for checking other invocations of the
+same model. Try checking against the x86 runtime:
+
+    $ python -m micro_eval.bin.eval cifar10_cnn:cpu --validate-against=cifar10_cnn:interp
+    INFO eval.py:370 model_name  setting config     1    2    3    4    5    6    7    8    9
+    ERROR eval.py:376 cifar10_cnn cpu             +005 -016 -027 -011 +059 -033 -032 -033 -015
+    ERROR eval.py:376 cifar10_cnn interp          -030 +023 -027 -010 -003 +010 +013 -023 +023
+    ...
+
+This didn't work, because the cifar10_cnn model uses random parameters by default. Model configuration
+can be passed as JSON. Now try using the configuration for validating output, which loads specific
+parameters:
+
+    $ python -m micro_eval.bin.eval cifar10_cnn:cpu:data/ --validate-against=cifar10_cnn:interp
+    INFO eval.py:370 model_name  setting config                                1    2    3    4    5    6    7    8    9
+    INFO eval.py:376 cifar10_cnn interp  data/cifar10-config-validate.json  -021 +017 +022 +018 +004 +007 -013 -008 -013
+    INFO eval.py:376 cifar10_cnn cpu     data/cifar10-config-validate.json  -021 +017 +022 +018 +004 +007 -013 -008 -013
+
+Now try running on the attached STM-Nucleo board:
+
+    $ python -m micro_eval.bin.eval cifar10_cnn:micro_dev
+    INFO eval.py:184 got prediction after 293.912 ms: {'label': array([  1, -16,  -2, -13,  -8,  17, -10, -15, -17, -14], dtype=int8)}
+    ...
+
+See if you can verify the output against the TVM interpreter runtime.
+
+## Using tuned models
+
+The previous result didn't run very quickly--__294__ ms vs __100__ ms in the equivalent CMSIS model.
+TVM can improve the runtime by automatically reorganizing and optimizing the computation, a process
+known as _autotuning_. First, let's see the result:
+
+    $ python -m micro_eval.bin.eval cifar10_cnn:micro_dev --use-tuned-schedule
+    INFO eval.py:184 got prediction after 157.354 ms: {'label': array([ -32,  -58,  -50,  -48,  103,   36, -110,   54,   66,   94], dtype=int8)}
+
+This gave us about a 47% improvement in runtime.
+
+## Running a CMSIS model
+
+You can run and time CMSIS-NN's version of this CIFAR10-CNN network:
+
+    $ python -m micro_eval.bin.eval cmsis_cifar10_cnn:micro_dev
+    INFO eval.py:189 got prediction after 105.403 ms: {'label': array([-27,  11, -14, -16, -35, -35, -35, -11,  27, 127], dtype=int8)}
+    ...
+
+There are a couple of points to note about this runtime:
+1. It uses ARM's quantization scheme, which isn't TFLite-compatible.
+2. The output from this model will differ from the TVM-generated model because they aren't quite
+   identical. See our blog post for more on this.
+
+You can also run and time a CMSIS-NN model using TFLite-compatible quantization. While this model
+doesn't output accurate results, it runs the same operations and differs only in weights, so the
+runtime should roughly match what you would expect running CMSIS-CNN as a TFLite model:
+
+    $ python -m micro_eval.bin.eval cmsis_cifar10_cnn:micro_dev:data/cmsis-config-tflite.json
+    INFO eval.py:189 got prediction after 135.856 ms: {'label': array([ -44, -128, -128,  127, -128, -128, -128, -128,  113,  127], dtype=int8)}
+    ...
+
+## Running autotuning
+
+__NOTE__: Autotuning takes a while on hardware--the above result was achieved by running autotuning for
+hundreds of iterations. However, you can still try it and see some speedup without waiting as long.
+Autotuning is a parallel process and can be sped up by adding more development boards.
+
+    $ python -m micro_eval.bin.autotune cifar10_cnn:micro_dev tune --num-iterations 20
+
+When the script exits successfully, you'll notice that
+`autotune-logs/eval/cifar10_cnn-micro_dev-HWOI-HWOI-HWOI.log` has been changed. This is a symlink
+that points to the default tuned schedule when `--use-tuned-schedule` is passed. A new file now
+also exists in its directory--this is the _autotuning log_. It contains the fastest configurations
+found during autotuning for each tuned task in the graph.
+
+## Debugging
+
+There are a lot of moving pieces here and it's easy for the system to fail. Here I've tried to document
+some of the problems you can run into, and how to solve them.
+
+
+### OpenOCD doesn't connect
+
+1. Make sure the board is plugged in with a data cable :)
+2. Double-check `hla_serial` in `env-config.json` (an empty string matches all boards).
+3. Try running openocd separately:
+    1. First, generate the _transport config_:
+
+        $ python -m micro_eval.bin.autotune cifar10_cnn:micro_dev rpc_dev_config
+
+    2. Now, try launching openocd:
+
+        $ 3rdparty/openocd/prefix/bin/openocd -f microrpc-dev-config/dev-0/openocd.cfg
+
+    Troubleshoot this until it connects to the device succesfully.
+
+### Autotuing: cannot connect to tracker or other openocd issues
+
+1. Double check a tracker/rpc server is not still running:
+
+    $ ps ax | grep tvm.exec.rpc_tracker
+    $ ps ax | grep tvm.exec.rpc_server
+
+    Kill them if so.
+
+## Running the tracker/server/openocd separately:
+
+Sometimes openocd, the tracker, or the RPC server need to be launched separately. A script
+`microrpc-dev-config/launch-openocds.sh` shows you how to do this, but you can also launch
+them yourself. Here is how to use that script with autotuing and eval:
+
+    # adjust task-index or omit for evaluating the whole model
+    $ python -m micro_eval.bin.autotune cifar10_cnn:micro_dev rpc_dev_config --task-index=2
+
+    # In another terminal:
+    $ cd microrpc-dev-config
+    $ ./launch-openocds.sh
+
+    # In original terminal
+    $ python -m micro_eval.bin.autotune  --pre-launched-tracker-hostport 127.0.0.1:9190 \
+        --single-task-index=2...
+    $ python -m micro_eval.bin.eval --openocd-server-hostport 127.0.0.1:6666 ...
+
+## Stuck/misbehaving board
+
+While rare with this demo, there's currently no protection included if the STM CPU enters
+an exception handler. In this case, it might not be possible for the debugger to reset the
+pending exception, and execution might start to produce obviously-wrong or unpredictable
+results. You're more likely to encounter this if you experiment with the model. Hard-reset
+the board or power it off in this case. We're working to address this issue in a future
+PR.

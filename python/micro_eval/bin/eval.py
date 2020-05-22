@@ -148,7 +148,12 @@ def _launch_gdb():
 
 
 def eval_micro_dev(args, transport_launcher, model_inst, compiled_model, samples):
-    openocd_host, openocd_port = transport_launcher.openocd_host_port_tuple(0)
+    if args.openocd_server_hostport:
+        openocd_host, openocd_port = args.openocd_server_hostport.rsplit(':', 1)
+        openocd_port = int(openocd_port)
+    else:
+        openocd_host, openocd_port = transport_launcher.openocd_host_port_tuple(0)
+
     config = stm32f746xx.generate_config(
             openocd_host, openocd_port, model_inst.section_constraints())
     if args.debug_micro_execution:
@@ -242,9 +247,9 @@ def parse_args():
                               'serial number. Must match the "hla_serial" key in the environment '
                               'config.'))
     parser.add_argument('--openocd-server-hostport',
-                        # NOTE: need to explicitly choose ipv4 address, not localhost.
-                        default='127.0.0.1:6666',
-                        help='Address of the OpenOCD TCL server to use for device communication.')
+                        help=('Address of the OpenOCD TCL server to use for device communication. '
+                              'NOTE: you might need to choose an IPv4 address (i.e. 127.0.0.1) '
+                              'here.'))
     parser.add_argument('--use-debug-runtime', action='store_true',
                         help=("Use debug runtime and print graph debugging info. This option is "
                               "useful when you're confident the program is executing correctly, but "
@@ -287,7 +292,8 @@ def main():
         dataset_generator_name, {'shuffle': not validate_against})
 
     transport_launcher = None
-    if any(setting == 'micro_dev' for _, setting in model_inst_setting.values()):
+    if (not args.openocd_server_hostport and
+        any(setting == 'micro_dev' for _, setting in model_inst_setting.values())):
         run_options = {'use_tracker': False, 'num_instances': 1}
         if args.device_serial_number:
             run_options['hla_serials'] = [args.device_serial_number]
@@ -342,6 +348,14 @@ def main():
             _LOG.info(f'Sample {i} ---->')
             rows = []
             rows.append([['model_name', 'setting', 'config']] + [x for x in range(10)])
+            def _add_row(model_spec, values):
+                model_spec_parts = model_spec.split(':', 3)
+                if len(model_spec_parts) == 2:
+                    model_spec_parts.append('')
+
+                rows.append([model_spec_parts] + values)
+
+
             for model_spec in args.model_specs:
                 color = ''
                 if model_spec != args.validate_against:
@@ -349,11 +363,9 @@ def main():
                         level = logging.ERROR
                     else:
                         level = logging.INFO
+                    _add_row(model_spec, list(results[model_spec][i]['label']))
 
-                rows.append([model_spec.split(':', 3)] +
-                            list(results[model_spec][i]['label']))
-            rows.append([args.validate_against.split(':', 3)] +
-                        results[args.validate_against][i]['label'].tolist())
+            _add_row(args.validate_against, results[args.validate_against][i]['label'].tolist())
 
             spacings = []
             for c in range(0, 3):
@@ -364,12 +376,10 @@ def main():
                               ['{0:5d}'.format(c) for c in rows[0][2:]]))
             format_string = f'{{0:{spacing}s}}'
             for r in rows[1:]:
-                model_spec = ''.join([spacings[c].format(r[0][c]) for c in range(0, 3)])
+                model_spec_parts = ''.join([spacings[c].format(r[0][c]) for c in range(0, 3)])
                 color = r[1]
-                results = ''.join([' {0:+04d}'.format(y) for y in r[2:]])
-                _LOG.log(level, '%s%s', model_spec, results)
-                #+  + colorama.Style.RESET_ALL + ''.
-            sys.exit(0)
+                result_str = ''.join([' {0:+04d}'.format(y) for y in r[2:]])
+                _LOG.log(level, '%s%s', model_spec_parts, result_str)
 
 
 if __name__ == "__main__":

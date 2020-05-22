@@ -136,6 +136,7 @@ def tune_model(args, transport_launcher, model_inst):
 
     for i, task in enumerate(tasks):
         with contextlib.ExitStack() as exit_stack:
+            section_constraints = model_inst.section_constraints(task_index_and_task=(i, task))
             if args.pre_launched_tracker_hostport:
                 tracker_host, tracker_port = args.pre_launched_tracker_hostport.rsplit(':', 1)
                 tracker_port = int(tracker_port)
@@ -144,7 +145,6 @@ def tune_model(args, transport_launcher, model_inst):
                 target_num_servers = 1
             else:
                 tracker_host, tracker_port = transport_launcher.tracker_host_port_tuple
-                section_constraints = model_inst.section_constraints(task_index_and_task=(i, task))
                 exit_stack.enter_context(transport_launcher.launch(
                     stm32f746xx.generate_config,
                     {'section_constraints': section_constraints}))

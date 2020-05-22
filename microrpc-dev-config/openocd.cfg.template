@@ -1,6 +1,6 @@
 source [find board/stm32f7discovery.cfg]
 reset_config srst_only separate srst_nogate srst_open_drain connect_assert_srst
-hla_serial "{hla_serial}"
+hla_serial {hla_serial}
 tcl_port {openocd_tcl_port}
 gdb_port {3333 + instance_num}
 telnet_port {4444 + instance_num}
