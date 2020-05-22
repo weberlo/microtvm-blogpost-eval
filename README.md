@@ -22,12 +22,14 @@ https://www.st.com/en/evaluation-tools/nucleo-f746zg.html).
 
 3. Build OpenOCD. Here we have chosen a specific commit that works with the Nucleo board, but
 
+```bash
     $ tools/patch-openocd.sh  # If using clang, fix a compiler error.
     $ cd 3rdparty/openocd
     # First, install dependencies listed in the README for your platform.
     $ ./bootstrap
     $ ./configure --prefix=$(pwd)/prefix
     $ make && make install
+```
 
 4. Install prerequisites:
     $ apt-get install gcc-arm-none-eabi
