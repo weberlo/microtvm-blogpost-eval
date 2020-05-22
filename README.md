@@ -1,11 +1,11 @@
-![microTVM logo](logo.png)
+![MicroTVM logo](logo.png)
 
-microTVM is an effort to run TVM on bare-metal microcontrollers. You can read more about the current
-design in the original [microTVM RFC](https://github.com/apache/incubator-tvm/issues/2563). This repo
+MicroTVM is an effort to run TVM on bare-metal microcontrollers. You can read more about the current
+design in the original [MicroTVM RFC](https://github.com/apache/incubator-tvm/issues/2563). This repo
 shows you how to run CIFAR10-CNN on the host machine and on an [STM Nucleo-F746ZG development board](
 https://www.st.com/en/evaluation-tools/nucleo-f746zg.html).
 
-![microTVM Performance graph](graph.png)
+![MicroTVM Performance graph](graph.png)
 
 ## Hardware you will need
 
@@ -23,7 +23,7 @@ https://www.st.com/en/evaluation-tools/nucleo-f746zg.html).
 
 1. Clone this repository (use `git clone --recursive` to clone submodules).
 2. [Install TVM](https://docs.tvm.ai/install/from_source.html).
- * __NOTE__: Ensure you enable microTVM by setting `set(USE_MICRO ON)` in `build/config.cmake`.
+ * __NOTE__: Ensure you enable MicroTVM by setting `set(USE_MICRO ON)` in `build/config.cmake`.
  * __NOTE__: Ensure you have `0884659eb8c5fe51cc4cac9f2f8b6400f47fdee6` plus
    [PR 5648](https://github.com/apache/incubator-tvm/pull/5648).
 
