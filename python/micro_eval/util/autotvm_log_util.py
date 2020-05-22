@@ -24,7 +24,9 @@ from micro_eval import util
 
 
 def compute_job_name(model_spec, model_inst):
-    return (f'{model_spec.rsplit(":", 1)[0]}-{model_inst.get_config_str()}'
+  if model_spec.count(':') > 1:
+    model_spec = ':'.join(model_spec.split(":", 2)[0:2])
+  return (f'{model_spec}-{model_inst.get_config_str()}'
             .replace(':', '-').replace('/', '-'))
 
 

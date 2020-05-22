@@ -256,6 +256,7 @@ def parse_args():
 
 
 def _cmd_rpc_dev_config(args):
+    log_util.config([], logging.INFO, console_only=True)
     transport_launcher = device_util.DeviceTransportLauncher({'use_tracker': True})
     model_inst, _ = model.instantiate_from_spec(args.model_spec)
     index_and_task = None
@@ -302,6 +303,7 @@ def _cmd_tune(args):
 
 
 def _cmd_analyze(args):
+    log_util.config([], logging.INFO, console_only=True)
     model_inst, _ = model.instantiate_from_spec(args.model_spec)
     tasks = model_inst.extract_tunable_tasks(model_inst.build_model())
     analyze(args, model_inst, tasks, args.log_file, promote=args.promote)
