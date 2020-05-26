@@ -211,48 +211,6 @@ def show_c_source(sched, arg_bufs):
 DEBUG_MODE = False
 
 
-def relay_micro_build(func, dev_config, target, params=None, lib_headers=None, lib_include_paths=None):
-    """Create a graph runtime module with a micro device context from a Relay function.
-
-    Parameters
-    ----------
-    func : relay.Function
-        function to compile
-
-    dev_config : TODO
-        TODO
-
-    target : TODO
-        TODO
-
-    params : dict
-        input parameters that do not change during inference
-
-    lib_headers : TODO
-        TODO
-
-    lib_include_paths : TODO
-        TODO
-
-    Return
-    ------
-    mod : tvm.module.Module
-        graph runtime module for the target device
-
-    """
-    with tvm.target.build_config(opt_level=3, disable_vectorize=True):
-        graph, c_mod, params = relay.build(func, target=target, params=params)
-    micro_mod = micro.create_micro_mod(c_mod, dev_config, lib_headers=lib_headers, lib_include_paths=lib_include_paths)
-    ctx = tvm.micro_dev(0)
-    if DEBUG_MODE:
-        dump_root = f'{get_repo_root()}/debug/micro'
-        mod = debug_runtime.create(graph, micro_mod, ctx, dump_root=dump_root)
-    else:
-        mod = graph_runtime.create(graph, micro_mod, ctx)
-    mod.set_input(**params)
-    return mod
-
-
 def gen_workload_desc_from_task(task):
     if 'conv2d' not in task[1]:
         return None

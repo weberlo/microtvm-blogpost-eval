@@ -22,8 +22,6 @@ from tvm.micro.device.arm import stm32f746xx
 from tvm.micro.device import MemConstraint
 
 
-from topi.util import get_const_tuple
-
 from micro_eval import dataset
 from micro_eval import model
 from micro_eval import util
@@ -82,7 +80,7 @@ def adapt_all_outputs(model_inst, graph_mod, sample):
 def eval_interp(args, transport_launcher, model_inst, compiled_model, samples):
     assert hasattr(model_inst, 'interp_lower_config'), (
         'HACK: for now, models run under the interpreter need an attribute "interp_lower_config", '
-        'which is tvm.relay.build_config() used to evaluate the IRModule')
+        'which is tvm.transform.PassContext() used to evaluate the IRModule')
 
     with model_inst.interp_lower_config:
         main_gv = tvm.relay.GlobalVar(compiled_model.entry_point)

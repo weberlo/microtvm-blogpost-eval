@@ -134,15 +134,17 @@ class Cifar10Cnn(TunableModel):
     def _is_simd(self):
         return any(l == 'HWOI' for l in self._kernel_layouts)
 
-    interp_lower_config = tvm.relay.build_config(opt_level=3, disabled_pass={"AlterOpLayout"})
+    # HACK: for now, models run under the interpreter need an attribute "interp_lower_config"
+    # which is tvm.transform.PassContext() used to evaluate the IRModule
+    interp_lower_config = tvm.transform.PassContext(opt_level=3, disabled_pass={"AlterOpLayout"})
 
     def _lower_cpu(self, compiled_model):
-        with tvm.relay.build_config(opt_level=3, disabled_pass={"AlterOpLayout"}):
+        with tvm.transform.PassContext(opt_level=3, disabled_pass={"AlterOpLayout"}):
             return LoweredModule(*tvm.relay.build(compiled_model.ir_mod[compiled_model.entry_point],
                                                   target="llvm", params=compiled_model.params))
 
     def _lower_micro_dev(self, compiled_model, dev_config):
-        with tvm.target.build_config(opt_level=3, disable_vectorize=True):
+        with tvm.transform.PassContext(opt_level=3, config={'tir.disable_vectorize': True}):
             graph, c_mod, params = tvm.relay.build(
                 compiled_model.ir_mod[compiled_model.entry_point], target=self.target,
                 params=compiled_model.params)
@@ -223,7 +225,7 @@ class Cifar10Cnn(TunableModel):
             {'data_layout': self.DATA_LAYOUT, 'kernel_layouts': kernel_layouts})
 
     def extract_tunable_tasks(self, compiled_model):
-        with tvm.target.build_config(opt_level=3, disable_vectorize=True):
+        with tvm.transform.PassContext(opt_level=3, config={'tir.disable_vectorize': True}):
             tasks = tvm.autotvm.task.extract_from_program(
                 compiled_model.ir_mod[compiled_model.entry_point],
                 compiled_model.params,
