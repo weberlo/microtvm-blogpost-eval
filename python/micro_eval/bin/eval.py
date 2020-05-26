@@ -370,12 +370,12 @@ def main():
                 spacings.append(f'{{0:{spacing}s}}')
 
             _LOG.info(''.join([spacings[c].format(rows[0][0][c]) for c in range(0, 3)] +
-                              ['{0:5d}'.format(c) for c in rows[0][2:]]))
+                              ['{0:5d}'.format(c) for c in rows[0][1:]]))
             format_string = f'{{0:{spacing}s}}'
             for r in rows[1:]:
                 model_spec_parts = ''.join([spacings[c].format(r[0][c]) for c in range(0, 3)])
                 color = r[1]
-                result_str = ''.join([' {0:+04d}'.format(y) for y in r[2:]])
+                result_str = ''.join([' {0:+04d}'.format(y) for y in r[1:]])
                 _LOG.log(level, '%s%s', model_spec_parts, result_str)
 
 
