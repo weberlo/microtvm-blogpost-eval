@@ -5,14 +5,128 @@ from mxnet.gluon.data.vision import transforms
 import onnx
 import tvm
 from tvm import relay
+from tvm.relay.expr_functor import ExprMutator, ExprVisitor
+from tvm.relay.type_functor import TypeMutator
 from tvm.relay import transform
 
 from micro_eval import util
 from micro_eval.util import model_util
 
+class QuantPrefixCutter(ExprMutator):
+    def __init__(self, params):
+        ExprMutator.__init__(self)
+        self.params = set(params)
+        self.subtree_params = set()
+
+    def visit_var(self, var):
+        if var in self.params:
+            self.subtree_params.add(var)
+        return var
+
+    def visit_call(self, call):
+        print(call.checked_type.dtype)
+        if call.op.name == 'cast' and call.checked_type.dtype == 'int8':
+            res = super().visit_call(call)
+            if len(self.subtree_params) == 0:
+                return res
+            else:
+                assert len(self.subtree_params) == 1
+                res = next(iter(self.subtree_params))
+                self.subtree_params.clear()
+                return res
+        else:
+            return super().visit_call(call)
+
+
+class QuantSuffixCutter(ExprMutator):
+    def __init__(self):
+        ExprMutator.__init__(self)
+        self.pre_cast_expr = None
+
+    def visit_call(self, call):
+        # print(call.checked_type.dtype)
+        if call.op.name == 'annotation.stop_fusion':
+            return call
+        else:
+            new_args = []
+            for arg in call.args:
+                arg_res = self.visit(arg)
+                if type(arg_res) == relay.Call and arg_res.op.name == 'annotation.stop_fusion':
+                    return arg_res
+                else:
+                    new_args.append(arg_res)
+            return relay.Call(call.func, new_args, call.attrs)
+
+#    def visit_function(self, func):
+#        # import pdb; pdb.set_trace()
+#        # new_params = [self.visit(x) for x in fn.params]
+#        sig_rewriter = SignatureRewriter()
+#        new_params = [
+#            relay.Var(
+#                param.name_hint,
+#                sig_rewriter.visit(param.type_annotation)
+#            )
+#            for param in func.params]
+#        new_body =
+#        new_ret_type = sig_rewriter.visit(func.ret_type)
+#        return relay.Function(
+#            func.params,
+#            self.visit(func.body),
+#            func.ret_type,
+#            func.type_params,
+#            func.attrs)
+
+
+class SignatureRewriter(TypeMutator):
+    def visit_tensor_type(self, tt):
+        return relay.TensorType(tt.shape, 'int8')
+
+
+def with_int_signature(func):
+    sig_rewriter = SignatureRewriter()
+    new_params = [
+        relay.Var(
+            param.name_hint,
+            sig_rewriter.visit(param.type_annotation)
+        )
+        for param in func.params]
+    new_ret_type = sig_rewriter.visit(func.ret_type)
+    return relay.Function(
+        new_params,
+        func.body,
+        new_ret_type,
+        func.type_params,
+        func.attrs)
+
+
+def partition_quantized(mod):
+    # TODO
+    # - change to expr mutator
+    # - match cast ops then call a separate visitor that finds the param at the bottom of the chain
+    # - return the result from the visitor
+    # - change types in function signature (use type functor?)
+    assert len(mod.functions) == 1
+    func = mod['main']
+    func = with_int_signature(func)
+
+    prefix_cutter = QuantPrefixCutter(func.params)
+    func = prefix_cutter.visit(func)
+    print('[Without Conversion Prefix]')
+    print(func)
+
+    suffix_cutter = QuantSuffixCutter()
+    func = suffix_cutter.visit(func)
+    print('[Without Conversion Suffix]')
+    print(func)
+
+    mod['main'] = func
+    mod = transform.InferType()(mod)
+    import pdb; pdb.set_trace()
+    return mod
+
 
 def quantize(mod, params):
-  with relay.quantize.qconfig(
+    with relay.quantize.qconfig(
       calibrate_mode='global_scale',
       global_scale=8.0,
       nbit_activation=8,
@@ -20,11 +134,13 @@ def quantize(mod, params):
       skip_conv_layers=[],
       dtype_input="int8",
       dtype_weight="int8"):
-    print('input:', mod)
-    quantized = relay.quantize.quantize(mod, params) #, dataset=numpy_samples)
-    print('output:', quantized)
-#  with open(args.quantized_tvm_model, 'w') as f:
-#    f.write(tvm.ir.save_json(quantized))
+        print('input:', mod)
+        quantized = relay.quantize.quantize(mod, params) #, dataset=numpy_samples)
+        print('output:', quantized)
+        print('partitioned:', partition_quantized(quantized))
+
+    #with open(args.quantized_tvm_model, 'w') as f:
+    #    f.write(tvm.ir.save_json(quantized))
 
 
 def quantize_cifar10():
@@ -90,6 +206,7 @@ def quantize_test():
         'w': tvm.nd.array(np.random.uniform(0, 1, size=w_shape).astype(weight_ty.dtype), ctx=tvm.cpu(0))
     }
     quantize(mod, params)
+
 
 if __name__ == '__main__':
 #   quantize_cifar10()
