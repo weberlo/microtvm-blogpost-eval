@@ -9,6 +9,7 @@ from tvm import relay
 from tvm.relay.expr_functor import ExprMutator, ExprVisitor
 from tvm.relay.type_functor import TypeMutator, TypeVisitor
 from tvm.relay import transform
+from topi import get_const_tuple
 
 from micro_eval import util
 from micro_eval.util import model_util
@@ -24,6 +25,19 @@ def with_dtype(ty, target_dtype):
             return relay.TensorType(tt.shape, self.target_dtype)
 
     return DtypeReplacer(target_dtype).visit(ty)
+
+
+def gen_rand_np(tt, low, high):
+    if 'int' in tt.dtype:
+        return np.random.randint(low, high, size=get_const_tuple(tt.shape), dtype=tt.dtype)
+    elif 'float' in tt.dtype:
+        return np.random.uniform(low, high, size=get_const_tuple(tt.shape)).astype(tt.dtype)
+    else:
+        assert False, 'unknown dtype'
+
+
+def gen_rand_tvm(tt, low, high):
+    return tvm.nd.array(gen_rand_np(tt, low, high), ctx=tvm.cpu(0))
 
 
 class QuantPrefixCutter(ExprMutator):
@@ -241,6 +255,7 @@ def quantize(mod, params):
         print()
         print('partitioned suffix:', post_mod)
         print()
+        return pre_mod, mid_mod, post_mod
 
     #with open(args.quantized_tvm_model, 'w') as f:
     #    f.write(tvm.ir.save_json(quantized))
@@ -277,6 +292,53 @@ def get_param_type(func, name):
             return param.checked_type
 
 
+def verify_partition(orig_mod, pre_mod, mid_mod, post_mod):
+    pre_func = pre_mod['main']
+    mid_func = mid_mod['main']
+    post_func = post_mod['main']
+    fused_mod = tvm.IRModule(functions={
+        relay.GlobalVar('quantize_inputs'): pre_func,
+        relay.GlobalVar('quantized_main'): mid_func,
+        relay.GlobalVar('dequantize_outputs'): post_func,
+    })
+
+    sb = relay.ScopeBuilder()
+    fused_mod_main_params = [relay.Var(param.name_hint) for param in pre_func.params]
+    quantized_inputs = sb.let('quantized_inputs', relay.Call(
+        fused_mod.get_global_var('quantize_inputs'),
+        fused_mod_main_params
+    ))
+    quantized_outputs = sb.let('quantized_outputs', relay.Call(
+        fused_mod.get_global_var('quantized_main'),
+        [relay.TupleGetItem(quantized_inputs, i) for i in range(len(pre_func.ret_type.fields))]
+    ))
+    dequantized_outputs = sb.let('dequantized_outputs', relay.Call(
+        fused_mod.get_global_var('dequantize_outputs'),
+        # TODO quit assuming we'll only have a single output?
+        [quantized_outputs]
+    ))
+    sb.ret(dequantized_outputs)
+    fused_mod['main'] = relay.Function(fused_mod_main_params, sb.get())
+
+    params = {
+        param.name_hint: gen_rand_tvm(param.type_annotation, 0, 1)
+        for param in fused_mod['main'].params
+    }
+    assert False, 'figure out where not implemented error is coming from'
+    graph, lib, _ = relay.build(fused_mod, "llvm", params={})
+    mod = graph_runtime.create(graph, lib, ctx=tvm.cpu(0))
+    mod.set_input(**params)
+    mod.run()
+    res = mod.get_output(0).asnumpy()
+    import pdb; pdb.set_trace()
+
+    #ref_res = np.exp(y_data + x_data)
+    #tvm.testing.assert_allclose(res, ref_res, atol=1e-5, rtol=1e-5)
+
+
+    import pdb; pdb.set_trace()
+
+
 def test_conv_quant():
     dshape = (1, 4, 16, 16)
     # TODO quantization shouldn't crash if a pre-quantized graph (already int8) is handed to it.
@@ -295,7 +357,7 @@ def test_conv_quant():
     weight_ty = mod['main'].params[1].type_annotation
     w_shape = list(map(lambda x: x.value, mod['main'].params[1].checked_type.shape))
     params = {
-        'w': tvm.nd.array(np.random.uniform(0, 1, size=w_shape).astype(weight_ty.dtype), ctx=tvm.cpu(0))
+        'w': gen_rand_tvm(weight_ty, 0, 1)
     }
     quantize(mod, params)
 
@@ -341,10 +403,11 @@ def test_multiple_arg_conversions():
     w1_shape = list(map(lambda x: x.value, w1_ty.shape))
     w2_shape = list(map(lambda x: x.value, w2_ty.shape))
     params = {
-        'w1': tvm.nd.array(np.random.uniform(0, 1, size=w1_shape).astype(w1_ty.dtype), ctx=tvm.cpu(0)),
-        'w2': tvm.nd.array(np.random.uniform(0, 1, size=w2_shape).astype(w2_ty.dtype), ctx=tvm.cpu(0))
+        'w1': gen_rand_tvm(w1_ty, 0, 1),
+        'w2': gen_rand_tvm(w2_ty, 0, 1),
     }
-    quantize(mod, params)
+    pre_mod, mid_mod, post_mod = quantize(mod, params)
+    verify_partition(mod, pre_mod, mid_mod, post_mod)
 
 
 if __name__ == '__main__':
