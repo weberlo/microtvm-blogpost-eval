@@ -7,7 +7,7 @@ import onnx
 import tvm
 from tvm import relay
 from tvm.relay.expr_functor import ExprMutator, ExprVisitor
-from tvm.relay.type_functor import TypeMutator
+from tvm.relay.type_functor import TypeMutator, TypeVisitor
 from tvm.relay import transform
 
 from micro_eval import util
@@ -75,7 +75,9 @@ def partition_prefix(mod):
         relay.analysis.free_vars(mid_body),
         mid_body,
         func.ret_type,
+        # TODO figure out how to divvy type params and attrs as well
         func.type_params,
+        # TODO what's an example of data that's stored in attrs?
         func.attrs)
     mid_mod = tvm.IRModule.from_expr(mid_func)
 
@@ -92,39 +94,61 @@ def partition_prefix(mod):
 class QuantSuffixCutter(ExprMutator):
     def __init__(self):
         ExprMutator.__init__(self)
+        self.mid_body = None
 
-    def visit_call(self, call):
-        if call.op.name == 'annotation.stop_fusion':
-            return call
+    def visit(self, expr):
+        if hasattr(expr, 'checked_type') and expr.checked_type.dtype == 'int8':
+            self.mid_body = expr
+            return relay.Var('input', expr.checked_type)
         else:
-            new_args = []
-            for arg in call.args:
-                arg_res = self.visit(arg)
-                if type(arg_res) == relay.Call and arg_res.op.name == 'annotation.stop_fusion':
-                    # import pdb; pdb.set_trace()
-                    return arg_res
-                else:
-                    new_args.append(arg_res)
-            return relay.Call(call.op, new_args, call.attrs)
-
-    #def visit_function(self, func):
-    #    new_body = self.visit(func.body)
-    #    return relay.Function(
-    #        relay.analysis.free_vars(new_body),
-    #        new_body,
-    #        func.ret_type,
-    #        func.type_params,
-    #        func.attrs)
+            return super().visit(expr)
 
 
+class ForbiddenDtypeException(Exception):
+    def __init__(self, invalid_dtype, allowed_dtypes):
+        self.invalid_dtype = invalid_dtype
+        self.allowed_dtypes = allowed_dtypes
+
+
+class TyPostPartitionChecker(TypeVisitor):
+    def __init__(self, allowed_dtypes):
+        TypeVisitor.__init__(self)
+        self.allowed_dtypes = allowed_dtypes
+
+    def visit_tensor_type(self, tt):
+        if tt.dtype not in self.allowed_dtypes:
+            raise ForbiddenDtypeException(tt.dtype, self.allowed_dtypes)
+
+
+class PostPartitionChecker(ExprVisitor):
+    def __init__(self, allowed_dtypes):
+        ExprVisitor.__init__(self)
+        self.allowed_dtypes = allowed_dtypes
+        self.ty_checker = TyPostPartitionChecker(allowed_dtypes)
+
+    def visit(self, expr):
+        if hasattr(expr, 'checked_type'):
+            self.ty_checker.visit(expr.checked_type)
+        return super().visit(expr)
 
 def partition_suffix(mod):
     assert len(mod.functions) == 1
     func = mod['main']
     suffix_cutter = QuantSuffixCutter()
-    func = suffix_cutter.visit(func)
+    post_body = suffix_cutter.visit(func.body)
+    post_func = relay.Function(
+        relay.analysis.free_vars(post_body),
+        post_body,
+        func.ret_type)
+    post_mod = tvm.IRModule.from_expr(post_func)
 
-    assert False, 'actually partition it'
+    mid_body = suffix_cutter.mid_body
+    mid_func = relay.Function(
+        func.params,
+        mid_body)
+    mid_mod = tvm.IRModule.from_expr(mid_func)
+
+    return mid_mod, post_mod
 
 
 # class VarReplacer(ExprMutator):
@@ -155,7 +179,7 @@ def partition_suffix(mod):
 #         func.attrs)
 
 
-def partition_quantized(mod):
+def partition_quantized(mod, allowed_dtypes):
     # TODO we have the prefix/suffix conversion code chopped off, but we want
     # it to be a *partition*, so we need to save the pieces we're cutting off.
     # Also, do we want any restrictions on how much gets cut off?
@@ -181,15 +205,17 @@ def partition_quantized(mod):
     # is the same as `x |> orig_func`
     assert len(mod.functions) == 1
     pre_mod, mid_mod = partition_prefix(mod)
-    print('[Without Conversion Prefix]')
-    print(mid_mod)
-    import pdb; pdb.set_trace()
     mid_mod, post_mod = partition_suffix(mid_mod)
-    print('[Without Conversion Suffix]')
-    print(func)
-    mod['main'] = func
-    mod = transform.InferType()(mod)
-    return mod
+
+    try:
+        checker = PostPartitionChecker(allowed_dtypes)
+        checker.visit(mid_mod['main'])
+    except ForbiddenDtypeException as e:
+        mod_str = '  ' + str(mod).replace('\n', '\n  ')
+        raise RuntimeError(f'found dtype `{e.invalid_dtype}` in middle partition'
+            f' when allowed dtypes were `{e.allowed_dtypes}`. module shown below:\n{mod_str}')
+
+    return pre_mod, mid_mod, post_mod
 
 
 def quantize(mod, params):
@@ -203,9 +229,18 @@ def quantize(mod, params):
       dtype_input="int8",
       dtype_weight="int8"):
         print('input:', mod)
+        print()
         quantized = relay.quantize.quantize(mod, params) #, dataset=numpy_samples)
         print('output:', quantized)
-        print('partitioned:', partition_quantized(quantized))
+        print()
+        allowed_dtypes = {'int8'}
+        pre_mod, mid_mod, post_mod = partition_quantized(quantized, allowed_dtypes)
+        print('partitioned prefix:', pre_mod)
+        print()
+        print('partitioned middle:', mid_mod)
+        print()
+        print('partitioned suffix:', post_mod)
+        print()
 
     #with open(args.quantized_tvm_model, 'w') as f:
     #    f.write(tvm.ir.save_json(quantized))
@@ -266,6 +301,8 @@ def test_conv_quant():
 
 
 def test_add_quant():
+    # TODO with respect to partitioning, what should we do in cases where the
+    # function is so small the quantizer doesn't quantize anything?
     func = relay.fromtext("""
     v0.0.4
     fn (%x : Tensor[(10, 10), float32],
@@ -276,14 +313,6 @@ def test_add_quant():
     mod = tvm.IRModule.from_expr(func)
     params = {}
     quantize(mod, params)
-    # """
-    # tp = relay.TensorType((10, 10), "float32")
-    # x = relay.var("x", tp)
-    # sb = relay.ScopeBuilder()
-    # t1 = sb.let("t1", relay.log(x))
-    # t2 = sb.let("t2", relay.add(t1, x))
-    # sb.ret(t2)
-    # f = relay.Function([x], sb.get())
 
 
 def test_multiple_arg_conversions():
