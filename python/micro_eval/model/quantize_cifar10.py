@@ -219,6 +219,8 @@ def partition_quantized(mod, allowed_dtypes):
     # is the same as `x |> orig_func`
     assert len(mod.functions) == 1
     pre_mod, mid_mod = partition_prefix(mod)
+    if len(pre_mod['main'].params) == 0:
+        raise RuntimeError(f'no inputs to be quantized in mod shown below:\n{mod}')
     mid_mod, post_mod = partition_suffix(mid_mod)
 
     try:
@@ -242,23 +244,21 @@ def quantize(mod, params):
       skip_dense_layers=False,
       dtype_input="int8",
       dtype_weight="int8"):
-        print('input:', mod)
-        print()
-        quantized = relay.quantize.quantize(mod, params) #, dataset=numpy_samples)
-        print('output:', quantized)
-        print()
+        # print('input:', mod)
+        # print()
+        quantized_mod = relay.quantize.quantize(mod, params) #, dataset=numpy_samples)
+        # print('output:', quantized_mod)
+        # print()
         allowed_dtypes = {'int8'}
-        pre_mod, mid_mod, post_mod = partition_quantized(quantized, allowed_dtypes)
-        print('partitioned prefix:', pre_mod)
-        print()
-        print('partitioned middle:', mid_mod)
-        print()
-        print('partitioned suffix:', post_mod)
-        print()
+        pre_mod, mid_mod, post_mod = partition_quantized(quantized_mod, allowed_dtypes)
+        # print('partitioned prefix:', pre_mod)
+        # print()
+        # print('partitioned middle:', mid_mod)
+        # print()
+        # print('partitioned suffix:', post_mod)
+        # print()
+        verify_partition(quantized_mod, pre_mod, mid_mod, post_mod)
         return pre_mod, mid_mod, post_mod
-
-    #with open(args.quantized_tvm_model, 'w') as f:
-    #    f.write(tvm.ir.save_json(quantized))
 
 
 def quantize_cifar10():
@@ -320,42 +320,33 @@ def verify_partition(orig_mod, pre_mod, mid_mod, post_mod):
     sb.ret(dequantized_outputs)
     fused_mod['main'] = relay.Function(fused_mod_main_params, sb.get())
 
-    params = {
-        param.name_hint: gen_rand_tvm(param.type_annotation, 0, 1)
+    params = [
+        gen_rand_tvm(param.type_annotation, 0, 1)
         for param in fused_mod['main'].params
-    }
-    assert False, 'figure out where not implemented error is coming from'
-    graph, lib, _ = relay.build(fused_mod, "llvm", params={})
-    mod = graph_runtime.create(graph, lib, ctx=tvm.cpu(0))
-    mod.set_input(**params)
-    mod.run()
-    res = mod.get_output(0).asnumpy()
-    import pdb; pdb.set_trace()
+    ]
 
-    #ref_res = np.exp(y_data + x_data)
-    #tvm.testing.assert_allclose(res, ref_res, atol=1e-5, rtol=1e-5)
+    vm = relay.create_executor('vm', ctx=tvm.cpu(0), target='llvm', mod=fused_mod)
+    fused_mod_result = vm.evaluate()(*params)
 
+    vm = relay.create_executor('vm', ctx=tvm.cpu(0), target='llvm', mod=orig_mod)
+    orig_mod_result = vm.evaluate()(*params)
 
-    import pdb; pdb.set_trace()
+    tvm.testing.assert_allclose(orig_mod_result.asnumpy(), fused_mod_result.asnumpy())
 
 
 def test_conv_quant():
-    dshape = (1, 4, 16, 16)
-    # TODO quantization shouldn't crash if a pre-quantized graph (already int8) is handed to it.
-    dtype = 'float32'
-    func_name = 'main'
-    x = relay.var("x", shape=dshape, dtype=dtype)
-    conv_expr = relay.nn.conv2d(
-            x, relay.var("w"),
-            kernel_size=(3, 3),
-            padding=(1, 1),
-            channels=4)
-    func = relay.Function(relay.analysis.free_vars(conv_expr), conv_expr)
+    func = relay.fromtext("""
+    v0.0.4
+    fn (%x: Tensor[(1, 4, 16, 16), float32],
+        %w: Tensor[(4, 4, 3, 3), float32]) -> Tensor[(1, 4, 16, 16), float32] {
+      nn.conv2d(%x, %w,
+        padding=[1, 1, 1, 1],
+        channels=4,
+        kernel_size=[3, 3])
+    }
+    """)
     mod = tvm.IRModule.from_expr(func)
-
-    # TODO crash is probs coming from non-const weights? add param for weight
-    weight_ty = mod['main'].params[1].type_annotation
-    w_shape = list(map(lambda x: x.value, mod['main'].params[1].checked_type.shape))
+    weight_ty = mod['main'].params[1].checked_type
     params = {
         'w': gen_rand_tvm(weight_ty, 0, 1)
     }
@@ -365,10 +356,12 @@ def test_conv_quant():
 def test_add_quant():
     # TODO with respect to partitioning, what should we do in cases where the
     # function is so small the quantizer doesn't quantize anything?
+    # TODO it *should* be able to quantize a single `add`. might need to patch
+    # it so it can
     func = relay.fromtext("""
     v0.0.4
-    fn (%x : Tensor[(10, 10), float32],
-        %y : Tensor[(10, 10), float32]) {
+    fn (%x: Tensor[(10, 10), float32],
+        %y: Tensor[(10, 10), float32]) {
       add(%x, %y)
     }
     """)
@@ -378,40 +371,36 @@ def test_add_quant():
 
 
 def test_multiple_arg_conversions():
-    dshape = (1, 4, 16, 16)
-    # TODO quantization shouldn't crash if a pre-quantized graph (already int8) is handed to it.
-    dtype = 'float32'
-    func_name = 'main'
-    conv1 = relay.nn.conv2d(
-        relay.var("x1", shape=dshape, dtype=dtype),
-        relay.var("w1"),
-        kernel_size=(3, 3),
-        padding=(1, 1),
-        channels=4)
-    conv2 = relay.nn.conv2d(
-        relay.var("x2", shape=dshape, dtype=dtype),
-        relay.var("w2"),
-        kernel_size=(3, 3),
-        padding=(1, 1),
-        channels=4)
-    res = relay.add(conv1, conv2)
-    func = relay.Function(relay.analysis.free_vars(res), res)
-    mod = tvm.IRModule.from_expr(func)
+    mod = tvm.IRModule.from_expr(relay.fromtext("""
+    v0.0.4
+    fn (%x1: Tensor[(1, 4, 16, 16), float32],
+        %w1: Tensor[(4, 4, 3, 3), float32],
+        %x2: Tensor[(1, 4, 16, 16), float32],
+        %w2: Tensor[(4, 4, 3, 3), float32]
+        ) -> Tensor[(1, 4, 16, 16), float32] {
+      %0 = nn.conv2d(%x1, %w1,
+        padding=[1, 1, 1, 1],
+        channels=4,
+        kernel_size=[3, 3]);
+      %1 = nn.conv2d(%x2, %w2,
+        padding=[1, 1, 1, 1],
+        channels=4,
+        kernel_size=[3, 3]);
+      add(%0, %1)
+    }
+    """))
 
     w1_ty = get_param_type(mod['main'], 'w1')
     w2_ty = get_param_type(mod['main'], 'w2')
-    w1_shape = list(map(lambda x: x.value, w1_ty.shape))
-    w2_shape = list(map(lambda x: x.value, w2_ty.shape))
     params = {
         'w1': gen_rand_tvm(w1_ty, 0, 1),
         'w2': gen_rand_tvm(w2_ty, 0, 1),
     }
     pre_mod, mid_mod, post_mod = quantize(mod, params)
-    verify_partition(mod, pre_mod, mid_mod, post_mod)
 
 
 if __name__ == '__main__':
     # quantize_cifar10()
-    # test_conv_quant()
+    test_conv_quant()
     # test_add_quant()
     test_multiple_arg_conversions()
